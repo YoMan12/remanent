@@ -157,7 +157,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
     <input type="checkbox" id="optSum" checked> Ten sam kod drugi raz: dodaj do ilości (wyłączone: zastąp)
   </label>
   <div class="lbl" style="margin-top:14px">Wysyłka maila</div>
-  <input class="txt" id="optMailUrl" type="url" inputmode="url" placeholder="Adres skryptu, np. https://…/mail.php" autocomplete="off">
+  <input class="txt" id="optMailUrl" type="url" inputmode="url" placeholder="Adres skryptu Google, https://script.google.com/…/exec" autocomplete="off">
   <input class="txt" id="optMailKey" type="password" placeholder="Klucz wysyłki" autocomplete="off">
   <div class="btnrow">
     <button class="danger" id="btnClear">Resetuj remanent</button>
@@ -582,6 +582,12 @@ async function deliver(files){
 /* ---------- Zakończenie: wysyłka mailem przez skrypt PHP na serwerze ---------- */
 const DEFAULT_MAIL = 'jacek@lim-czestochowa.com.pl';
 let finFiles = null;
+const toBase64 = f => new Promise((ok, bad) => {
+  const r = new FileReader();
+  r.onload = () => ok(String(r.result).split(',')[1]);
+  r.onerror = () => bad(r.error);
+  r.readAsDataURL(f);
+});
 function totals(){
   const codes = Object.keys(items);
   return {n: codes.length, sum: codes.reduce((s,c) => s + items[c].qty, 0)};
@@ -605,17 +611,23 @@ $('fYes').onclick = async () => {
   if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki w Ustawieniach'; $('fSaveRow').hidden = false; return; }
   const {n, sum} = totals();
   finFiles = reportFiles();
-  const fd = new FormData();
-  fd.append('key', opts.mailKey || '');
-  fd.append('to', to);
-  fd.append('subject', 'Remanent ' + stamp().replace('_', ' '));
-  fd.append('body', `Remanent ${stamp().replace('_', ' ')}\nPozycji: ${n}\nSztuk razem: ${sum}\n`);
-  for(const f of finFiles) fd.append('files[]', f, f.name);
+  const subject = 'Remanent ' + stamp().replace('_', ' ');
+  const body = `${subject}\nPozycji: ${n}\nSztuk razem: ${sum}\n`;
   $('fYes').disabled = true; $('fYes').textContent = 'Wysyłam…'; $('finErr').textContent = '';
   try{
+    // Google Apps Script (tymczasowo): JSON jako text/plain, bez preflightu CORS; pliki w base64
+    const files = await Promise.all(finFiles.map(async f => ({name:f.name, data:await toBase64(f)})));
+    const payload = {key:opts.mailKey || '', to, subject, body, files};
+    const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(payload)});
+    /* Skrypt PHP na hostingu (serwer/mail.php) — wrócić do tego, gdy będzie dostęp do hostingu:
+    const fd = new FormData();
+    fd.append('key', opts.mailKey || ''); fd.append('to', to);
+    fd.append('subject', subject); fd.append('body', body);
+    for(const f of finFiles) fd.append('files[]', f, f.name);
     const r = await fetch(opts.mailUrl, {method:'POST', body:fd});
+    */
     const j = await r.json().catch(() => ({}));
-    if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+    if(!r.ok || !j.ok) throw new Error(j.error || (r.ok ? 'nieoczekiwana odpowiedź skryptu' : 'HTTP ' + r.status));
   }catch(e){
     $('finErr').textContent = 'Nie wysłano: ' + (e?.message || e) + '. Lista została bez zmian.';
     $('fSaveRow').hidden = false;
