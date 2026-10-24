@@ -37,14 +37,24 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline
 button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 button.danger{color:var(--bad)}
 button.ghost{background:transparent}
-#camwrap{position:relative;border-radius:14px;overflow:hidden;background:#000;min-height:180px}
-#reader{width:100%}
-#reader video{object-fit:cover;transform-origin:center;transition:transform .15s}
+/* Podgląd wykadrowany do poziomego paska — kod EAN i tak jest szeroki i niski */
+#camwrap{position:relative;border-radius:14px;overflow:hidden;background:#000;height:clamp(130px,22vh,200px)}
+#reader{width:100%!important;height:100%!important;border:0!important}
+#reader video{width:100%!important;height:100%!important;object-fit:cover;transform-origin:center;transition:transform .15s}
+#reader #qr-shaded-region,#reader img,#reader canvas{display:none!important}
+#aim{position:absolute;left:7%;right:7%;top:14%;bottom:14%;pointer-events:none}
+#aim b{position:absolute;width:22px;height:22px;border:3px solid var(--accent)}
+#aim b:nth-child(1){left:0;top:0;border-right:0;border-bottom:0;border-top-left-radius:8px}
+#aim b:nth-child(2){right:0;top:0;border-left:0;border-bottom:0;border-top-right-radius:8px}
+#aim b:nth-child(3){left:0;bottom:0;border-right:0;border-top:0;border-bottom-left-radius:8px}
+#aim b:nth-child(4){right:0;bottom:0;border-left:0;border-top:0;border-bottom-right-radius:8px}
+#aim i{position:absolute;left:4%;right:4%;top:50%;height:2px;margin-top:-1px;background:var(--bad);opacity:.85;box-shadow:0 0 6px var(--bad)}
 #camctl{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-top:8px}
-#camctl label{display:flex;align-items:center;gap:8px;flex:1 1 200px;font:500 13px var(--mono);color:var(--muted)}
+#camctl{flex-wrap:nowrap}
+#camctl label{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;font:500 13px var(--mono);color:var(--muted)}
 #zoom{flex:1;accent-color:var(--accent)}
 #zoomVal{min-width:3.2em;text-align:right;color:var(--fg);font-variant-numeric:tabular-nums}
-#camSel{flex:1 1 160px;min-width:0;font:500 14px var(--sans);padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg)}
+#camSel{flex:0 1 38%;min-width:0;padding:8px!important;font:500 14px var(--sans);padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg)}
 #focusRing{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid var(--accent);border-radius:50%;pointer-events:none;opacity:0;transition:opacity .4s}
 #focusRing.show{opacity:1}
 #camstart{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#e9ece8;text-align:center;padding:16px}
@@ -96,6 +106,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
     <div>Zeskanuj kod kreskowy, potem powiedz ilość</div>
     <button class="primary" id="btnCam">Włącz kamerę</button>
   </div>
+  <div id="aim" hidden><b></b><b></b><b></b><b></b><i></i></div>
   <div id="focusRing"></div>
 </div>
 
@@ -281,7 +292,7 @@ async function startCameraInner(){
     experimentalFeatures:{useBarCodeDetectorIfSupported:true}
   });
   const cam = opts.camId ? {deviceId:{exact:opts.camId}} : {facingMode:'environment'};
-  const cfg = {fps:12, qrbox:(w,h)=>({width:Math.floor(w*.85), height:Math.floor(Math.min(h*.5, w*.5))})};
+  const cfg = {fps:12};   // skanujemy całą klatkę, kadrowanie jest tylko wizualne
   try{
     try{
       // Wyższa rozdzielczość = ostrzejsze kreski przy małych kodach
@@ -290,7 +301,7 @@ async function startCameraInner(){
       if(opts.camId){ opts.camId = ''; save('opts', opts); }
       await scanner.start({facingMode:'environment'}, cfg, onScan, ()=>{});
     }
-    scanning = true; $('camstart').hidden = true; $('camctl').hidden = false;
+    scanning = true; $('camstart').hidden = true; $('camctl').hidden = false; $('aim').hidden = false;
     await setupTrack();
     fillCameras();
     try{ await navigator.wakeLock?.request('screen'); }catch{}
