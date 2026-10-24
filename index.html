@@ -266,7 +266,13 @@ function beep(freq=1400, ms=90){
 /* ---------- Kamera ---------- */
 let scanner = null, scanning = false, lastCode = '', lastAt = 0;
 
+let starting = false;
 async function startCamera(){
+  if(starting || scanning) return;
+  starting = true;
+  try{ await startCameraInner(); } finally { starting = false; }
+}
+async function startCameraInner(){
   if(!window.Html5Qrcode){ toast('Nie wczytano biblioteki skanera — sprawdź internet'); return; }
   const F = Html5QrcodeSupportedFormats;
   scanner = new Html5Qrcode('reader', {
