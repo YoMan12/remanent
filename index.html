@@ -585,6 +585,17 @@ document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
 });
 catInfo(); render();
+
+// Kamera startuje sama po otwarciu aplikacji; przycisk zostaje tylko jako zapas, gdy start się nie uda
+startCamera();
+// Po powrocie do aplikacji Android często wyłącza kamerę — włącz ją ponownie
+document.addEventListener('visibilitychange', async () => {
+  if(document.visibilityState !== 'visible' || !scanner) return;
+  if(track && track.readyState === 'ended'){
+    try{ await scanner.stop(); scanner.clear(); }catch{}
+    scanning = false; startCamera();
+  }
+});
 </script>
 </body>
 </html>
