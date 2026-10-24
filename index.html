@@ -39,7 +39,14 @@ button.danger{color:var(--bad)}
 button.ghost{background:transparent}
 #camwrap{position:relative;border-radius:14px;overflow:hidden;background:#000;min-height:180px}
 #reader{width:100%}
-#reader video{object-fit:cover}
+#reader video{object-fit:cover;transform-origin:center;transition:transform .15s}
+#camctl{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-top:8px}
+#camctl label{display:flex;align-items:center;gap:8px;flex:1 1 200px;font:500 13px var(--mono);color:var(--muted)}
+#zoom{flex:1;accent-color:var(--accent)}
+#zoomVal{min-width:3.2em;text-align:right;color:var(--fg);font-variant-numeric:tabular-nums}
+#camSel{flex:1 1 160px;min-width:0;font:500 14px var(--sans);padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg)}
+#focusRing{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid var(--accent);border-radius:50%;pointer-events:none;opacity:0;transition:opacity .4s}
+#focusRing.show{opacity:1}
 #camstart{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#e9ece8;text-align:center;padding:16px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
 .lbl{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
@@ -89,6 +96,12 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
     <div>Zeskanuj kod kreskowy, potem powiedz ilość</div>
     <button class="primary" id="btnCam">Włącz kamerę</button>
   </div>
+  <div id="focusRing"></div>
+</div>
+
+<div id="camctl" hidden>
+  <label for="zoom">Zoom <input type="range" id="zoom" min="1" max="4" step="0.1" value="1.5"><span id="zoomVal">1.5×</span></label>
+  <select id="camSel" aria-label="Wybór aparatu"></select>
 </div>
 
 <div id="manual">
@@ -260,15 +273,91 @@ async function startCamera(){
     formatsToSupport:[F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E,F.CODE_128,F.CODE_39,F.CODE_93,F.ITF,F.QR_CODE,F.DATA_MATRIX],
     experimentalFeatures:{useBarCodeDetectorIfSupported:true}
   });
+  const cam = opts.camId ? {deviceId:{exact:opts.camId}} : {facingMode:'environment'};
+  const cfg = {fps:12, qrbox:(w,h)=>({width:Math.floor(w*.85), height:Math.floor(Math.min(h*.5, w*.5))})};
   try{
-    await scanner.start({facingMode:'environment'},
-      {fps:12, qrbox:(w,h)=>({width:Math.floor(w*.85), height:Math.floor(Math.min(h*.5, w*.5))})},
-      onScan, ()=>{});
-    scanning = true; $('camstart').hidden = true;
+    try{
+      // Wyższa rozdzielczość = ostrzejsze kreski przy małych kodach
+      await scanner.start(cam, {...cfg, videoConstraints:{...cam, width:{ideal:1920}, height:{ideal:1080}}}, onScan, ()=>{});
+    }catch(e1){
+      if(opts.camId){ opts.camId = ''; save('opts', opts); }
+      await scanner.start({facingMode:'environment'}, cfg, onScan, ()=>{});
+    }
+    scanning = true; $('camstart').hidden = true; $('camctl').hidden = false;
+    await setupTrack();
+    fillCameras();
     try{ await navigator.wakeLock?.request('screen'); }catch{}
   }catch(e){
     toast('Brak dostępu do kamery: ' + (e?.message || e));
   }
+}
+
+/* --- ostrość i zoom: bezpośrednio na ścieżce wideo --- */
+let track = null, caps = {}, hwZoom = false;
+const videoEl = () => document.querySelector('#reader video');
+
+async function setupTrack(){
+  track = videoEl()?.srcObject?.getVideoTracks?.()[0] || null;
+  caps = (track && track.getCapabilities) ? track.getCapabilities() : {};
+  if(caps.focusMode?.includes('continuous')){
+    try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch{}
+  }
+  const z = $('zoom');
+  hwZoom = !!caps.zoom;
+  if(hwZoom){ z.min = caps.zoom.min; z.max = Math.min(caps.zoom.max, 8); z.step = caps.zoom.step || 0.1; }
+  else { z.min = 1; z.max = 3; z.step = 0.1; }
+  await setZoom(opts.zoom ?? 1.5);
+}
+
+async function setZoom(v){
+  v = Math.min(+$('zoom').max, Math.max(+$('zoom').min, +v));
+  $('zoom').value = v; $('zoomVal').textContent = (+v).toFixed(1) + '×';
+  opts.zoom = v; save('opts', opts);
+  const vid = videoEl();
+  if(hwZoom){
+    try{ await track.applyConstraints({advanced:[{zoom:v}]}); if(vid) vid.style.transform = ''; return; }catch{ hwZoom = false; }
+  }
+  if(vid) vid.style.transform = `scale(${v})`;   // zoom cyfrowy, gdy aparat nie obsługuje sprzętowego
+}
+
+async function tapFocus(ev){
+  if(!track || current) return;
+  const r = $('camwrap').getBoundingClientRect();
+  const x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+  const ring = $('focusRing'); ring.style.left = (x*100)+'%'; ring.style.top = (y*100)+'%';
+  ring.classList.add('show'); setTimeout(()=>ring.classList.remove('show'), 900);
+  try{
+    const c = {};
+    if(caps.pointsOfInterest !== undefined) c.pointsOfInterest = [{x, y}];
+    if(caps.focusMode?.includes('single-shot')) c.focusMode = 'single-shot';
+    else if(caps.focusMode?.includes('continuous')) c.focusMode = 'continuous';
+    await track.applyConstraints({advanced:[c]});
+    if(c.focusMode === 'single-shot') setTimeout(()=>track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{}), 1500);
+  }catch{}
+}
+
+async function fillCameras(){
+  let cams = [];
+  try{ cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); }catch{}
+  const back = cams.filter(c => !/front|przedni|user/i.test(c.label));
+  const list = back.length ? back : cams;
+  const sel = $('camSel');
+  sel.hidden = list.length < 2;
+  const activeId = track?.getSettings?.().deviceId;
+  sel.innerHTML = '';
+  list.forEach((c, i) => {
+    const o = document.createElement('option'); o.value = c.deviceId;
+    o.textContent = `Aparat ${i+1}` + (c.label ? ` (${c.label.replace(/camera2\s*/i,'').slice(0,24)})` : '');
+    if(c.deviceId === activeId) o.selected = true;
+    sel.append(o);
+  });
+}
+
+async function switchCamera(id){
+  opts.camId = id; save('opts', opts);
+  try{ await scanner.stop(); scanner.clear(); }catch{}
+  scanning = false;
+  await startCamera();
 }
 
 function pauseCam(){ if(scanner && scanning){ try{ scanner.pause(true); }catch{} } }
@@ -451,6 +540,9 @@ $('catFile').onchange = async e => {
 
 /* ---------- Podpięcie ---------- */
 $('btnCam').onclick = startCamera;
+$('zoom').addEventListener('input', e => setZoom(e.target.value));
+$('camSel').addEventListener('change', e => switchCamera(e.target.value));
+$('camwrap').addEventListener('click', tapFocus);
 $('mic').onclick = () => rec ? stopListen() : listen();
 $('btnSave').onclick = commit;
 $('btnCancel').onclick = closeEntry;
