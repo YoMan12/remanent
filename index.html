@@ -99,13 +99,14 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <div id="focusRing"></div>
 </div>
 
+<div id="scanHint" class="hint" style="min-height:1.2em;margin-top:6px"></div>
 <div id="camctl" hidden>
   <label for="zoom">Zoom <input type="range" id="zoom" min="1" max="4" step="0.1" value="1.5"><span id="zoomVal">1.5×</span></label>
   <select id="camSel" aria-label="Wybór aparatu"></select>
 </div>
 
 <div id="manual">
-  <input id="manualCode" inputmode="numeric" placeholder="Kod ręcznie (gdy nie da się zeskanować)" autocomplete="off">
+  <input id="manualCode" inputmode="numeric" placeholder="EAN-13 ręcznie (13 cyfr)" maxlength="13" autocomplete="off">
   <button id="btnManual">OK</button>
 </div>
 
@@ -270,7 +271,7 @@ async function startCamera(){
   const F = Html5QrcodeSupportedFormats;
   scanner = new Html5Qrcode('reader', {
     verbose:false,
-    formatsToSupport:[F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E,F.CODE_128,F.CODE_39,F.CODE_93,F.ITF,F.QR_CODE,F.DATA_MATRIX],
+    formatsToSupport:[F.EAN_13],
     experimentalFeatures:{useBarCodeDetectorIfSupported:true}
   });
   const cam = opts.camId ? {deviceId:{exact:opts.camId}} : {facingMode:'environment'};
@@ -363,12 +364,33 @@ async function switchCamera(id){
 function pauseCam(){ if(scanner && scanning){ try{ scanner.pause(true); }catch{} } }
 function resumeCam(){ if(scanner && scanning){ try{ scanner.resume(); }catch{} } }
 
+/* EAN-13: 13 cyfr + poprawna cyfra kontrolna */
+function isEan13(c){
+  if(!/^\d{13}$/.test(c)) return false;
+  let sum = 0;
+  for(let i = 0; i < 12; i++) sum += (+c[i]) * (i % 2 ? 3 : 1);
+  return (10 - sum % 10) % 10 === +c[12];
+}
+
+// Kod przyjmujemy dopiero, gdy ten sam poprawny EAN-13 odczytamy 2 razy z rzędu
+let candidate = '', candHits = 0, candAt = 0, badAt = 0;
 function onScan(text){
-  const code = String(text).trim();
-  const now = Date.now();
   if(current) return;
+  const code = String(text).replace(/\s/g,'');
+  const now = Date.now();
+  if(!isEan13(code)){
+    candidate = ''; candHits = 0;
+    if(now - badAt > 2000){ badAt = now; $('scanHint').textContent = 'Odczyt niepełny — przytrzymaj telefon nieruchomo'; }
+    return;
+  }
   if(code === lastCode && now - lastAt < 2500) return;
+  if(code === candidate && now - candAt < 1500) candHits++;
+  else { candidate = code; candHits = 1; }
+  candAt = now;
+  if(candHits < 2) return;
+  candidate = ''; candHits = 0;
   lastCode = code; lastAt = now;
+  $('scanHint').textContent = '';
   beep();
   openEntry(code);
 }
@@ -548,7 +570,12 @@ $('btnSave').onclick = commit;
 $('btnCancel').onclick = closeEntry;
 $('qty').addEventListener('keydown', e => { if(e.key === 'Enter') commit(); });
 $('qty').addEventListener('input', () => stopListen());
-$('btnManual').onclick = () => { const c = $('manualCode').value.trim(); if(c){ $('manualCode').value=''; openEntry(c); } };
+$('btnManual').onclick = () => {
+  const c = $('manualCode').value.replace(/\s/g,'');
+  if(!c) return;
+  if(!isEan13(c)){ toast(/^\d{13}$/.test(c) ? 'Błędna cyfra kontrolna — sprawdź kod' : 'Kod EAN-13 ma mieć 13 cyfr'); return; }
+  $('manualCode').value=''; openEntry(c);
+};
 $('manualCode').addEventListener('keydown', e => { if(e.key === 'Enter') $('btnManual').click(); });
 for(const [id,key] of [['optAutoMic','autoMic'],['optAutoSave','autoSave'],['optSum','sum']]){
   $(id).checked = opts[key];
