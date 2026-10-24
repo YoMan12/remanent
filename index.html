@@ -37,6 +37,7 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline
 button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 button.danger{color:var(--bad)}
 button.ghost{background:transparent}
+button.icon{min-height:40px;padding:6px 10px;font-size:20px;line-height:1}
 /* Podgląd wykadrowany do poziomego paska — kod EAN i tak jest szeroki i niski */
 #camwrap{position:relative;border-radius:14px;overflow:hidden;background:#000;height:clamp(130px,22vh,200px)}
 #reader{width:100%!important;height:100%!important;border:0!important}
@@ -99,7 +100,10 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 <body>
 <header>
   <h1>Remanent</h1>
-  <span class="stat" id="stat">0 poz. · 0 szt.</span>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="stat" id="stat">0 poz. · 0 szt.</span>
+    <button class="ghost icon" id="btnSet" aria-label="Ustawienia wysyłki">⚙</button>
+  </div>
 </header>
 
 <div id="camwrap">
@@ -156,9 +160,6 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
     <input type="checkbox" id="optSum" checked> Ten sam kod drugi raz: dodaj do ilości (wyłączone: zastąp)
   </label>
-  <div class="lbl" style="margin-top:14px">Wysyłka maila</div>
-  <input class="txt" id="optMailUrl" type="url" inputmode="url" placeholder="Adres skryptu Google, https://script.google.com/…/exec" autocomplete="off">
-  <input class="txt" id="optMailKey" type="password" placeholder="Klucz wysyłki" autocomplete="off">
   <div class="btnrow">
     <button class="danger" id="btnClear">Resetuj remanent</button>
   </div>
@@ -202,6 +203,17 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <div class="btnrow">
     <button id="kNo">Anuluj</button>
     <button class="danger" id="kYes">Wyczyść</button>
+  </div>
+</dialog>
+
+<dialog id="dlgSet">
+  <h2>Ustawienia wysyłki</h2>
+  <label class="lbl" for="optMailUrl">Adres skryptu</label>
+  <input class="txt" id="optMailUrl" type="url" inputmode="url" placeholder="https://script.google.com/…/exec" autocomplete="off">
+  <label class="lbl" for="optMailKey" style="display:block;margin-top:12px">Klucz wysyłki</label>
+  <input class="txt" id="optMailKey" type="password" autocomplete="off">
+  <div class="btnrow">
+    <button class="primary" id="sOk">Zamknij</button>
   </div>
 </dialog>
 
@@ -608,7 +620,7 @@ $('fYes').onclick = async () => {
   const to = $('finMail').value.trim();
   if(!$('finMail').checkValidity() || !to){ $('finErr').textContent = 'Podaj poprawny adres e-mail'; return; }
   opts.mailTo = to; save('opts', opts);
-  if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki w Ustawieniach'; $('fSaveRow').hidden = false; return; }
+  if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki (⚙ u góry ekranu)'; $('fSaveRow').hidden = false; return; }
   const {n, sum} = totals();
   finFiles = reportFiles();
   const subject = 'Remanent ' + stamp().replace('_', ' ');
@@ -713,6 +725,9 @@ for(const [id,key] of [['optMailUrl','mailUrl'],['optMailKey','mailKey']]){
   $(id).value = opts[key] || '';
   $(id).onchange = () => { opts[key] = $(id).value.trim(); save('opts', opts); };
 }
+$('btnSet').onclick = () => $('dlgSet').showModal();
+// Zapis także przy zamknięciu — na telefonie change nie zawsze przychodzi przed zamknięciem okna
+$('sOk').onclick = () => { for(const id of ['optMailUrl','optMailKey']) $(id).onchange(); $('dlgSet').close(); };
 document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
 });
