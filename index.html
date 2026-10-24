@@ -15,7 +15,7 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
-/* Układ: jedna kolumna — kamera u góry, panel ilości, lista pozycji, pasek eksportu na dole */
+/* Układ: jedna kolumna — kamera u góry, panel ilości, lista pozycji, pasek zakończenia na dole */
 :root{
   --bg:#f3f4f2; --panel:#ffffff; --fg:#1b1f24; --muted:#5d6670; --line:#d9ddd8;
   --accent:#e8a317; --accent-fg:#1b1f24; --ok:#2f8f4e; --bad:#c43d32;
@@ -92,6 +92,8 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 dialog h2{margin:0 0 8px;font:600 17px var(--sans)}
 dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center;padding:8px;border:2px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
 .hint{font-size:13px;color:var(--muted)}
+.txt{display:block;width:100%;font:500 16px var(--sans);padding:10px;margin-top:6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+.err{color:var(--bad);font-size:13px;min-height:1.2em;margin-top:6px}
 </style>
 </head>
 <body>
@@ -154,19 +156,24 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
     <input type="checkbox" id="optSum" checked> Ten sam kod drugi raz: dodaj do ilości (wyłączone: zastąp)
   </label>
+  <div class="lbl" style="margin-top:14px">Wysyłka maila</div>
+  <input class="txt" id="optMailUrl" type="url" inputmode="url" placeholder="Adres skryptu, np. https://…/mail.php" autocomplete="off">
+  <input class="txt" id="optMailKey" type="password" placeholder="Klucz wysyłki" autocomplete="off">
   <div class="btnrow">
-    <button id="btnCatalog">Wczytaj listę produktów (CSV)</button>
+    <button class="danger" id="btnClear">Resetuj remanent</button>
+  </div>
+  <div class="btnrow">
+    <button id="btnCatalog">Wczytaj listę produktów (CSV/XLSX)</button>
+  </div>
+  <div class="btnrow">
+    <button class="danger" id="btnCatClear" hidden>Wyczyść listę produktów</button>
   </div>
   <div class="hint" id="catInfo" style="margin-top:6px"></div>
   <input type="file" id="catFile" accept=".csv,.txt,.xlsx" hidden>
-  <div class="btnrow">
-    <button class="danger" id="btnClear">Nowy remanent (wyczyść listę)</button>
-  </div>
 </section>
 
 <footer>
-  <button id="btnCsv">CSV</button>
-  <button class="primary" id="btnXlsx">Eksport XLSX</button>
+  <button class="primary" id="btnFinish">Zakończ remanent</button>
 </footer>
 
 <dialog id="dlgEdit">
@@ -181,11 +188,35 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </dialog>
 
 <dialog id="dlgClear">
-  <h2>Wyczyścić listę?</h2>
-  <p class="hint">Zniknie <b id="clrN"></b> pozycji. Najpierw zrób eksport, jeśli go potrzebujesz.</p>
+  <h2>Zresetować remanent?</h2>
+  <p class="hint">Zniknie <b id="clrN"></b> pozycji. Nic nie zostanie wysłane.</p>
   <div class="btnrow">
     <button id="cNo">Anuluj</button>
-    <button class="danger" id="cYes">Wyczyść</button>
+    <button class="danger" id="cYes">Resetuj</button>
+  </div>
+</dialog>
+
+<dialog id="dlgCat">
+  <h2>Wyczyścić listę produktów?</h2>
+  <p class="hint">Nazwy znikną z ekranu i z raportu. Policzone pozycje zostają.</p>
+  <div class="btnrow">
+    <button id="kNo">Anuluj</button>
+    <button class="danger" id="kYes">Wyczyść</button>
+  </div>
+</dialog>
+
+<dialog id="dlgFinish">
+  <h2>Zakończyć remanent?</h2>
+  <p class="hint"><b id="finN"></b>. Pliki CSV i XLSX pójdą mailem, potem lista zostanie wyczyszczona.</p>
+  <label class="lbl" for="finMail">Wyślij na adres</label>
+  <input class="txt" id="finMail" type="email" inputmode="email" autocomplete="email">
+  <div class="err" id="finErr"></div>
+  <div class="btnrow">
+    <button id="fNo">Anuluj</button>
+    <button class="primary" id="fYes">Wyślij i zakończ</button>
+  </div>
+  <div class="btnrow" id="fSaveRow" hidden>
+    <button class="ghost" id="fSave">Zapisz pliki w telefonie</button>
   </div>
 </dialog>
 
@@ -503,61 +534,118 @@ $('dCancel').onclick = () => $('dlgEdit').close();
 
 $('btnClear').onclick = () => { $('clrN').textContent = Object.keys(items).length; $('dlgClear').showModal(); };
 $('cNo').onclick = () => $('dlgClear').close();
-$('cYes').onclick = () => { items = {}; persist(); $('dlgClear').close(); toast('Lista wyczyszczona'); };
+$('cYes').onclick = () => { items = {}; persist(); $('dlgClear').close(); toast('Remanent zresetowany'); };
 
 /* ---------- Eksport ---------- */
+// Ten sam układ co przy wczytywaniu listy: Kod | Ilość | Nazwa (Nazwa tylko, gdy wczytano listę)
 function rows(){
   const hasCat = Object.keys(catalog).length > 0;
-  const head = hasCat ? ['Kod','Nazwa','Ilość'] : ['Kod','Ilość'];
-  const body = Object.keys(items).sort().map(c => hasCat ? [c, catalog[c]||'', items[c].qty] : [c, items[c].qty]);
+  const head = hasCat ? ['Kod','Ilość','Nazwa'] : ['Kod','Ilość'];
+  const body = Object.keys(items).sort().map(c => hasCat ? [c, items[c].qty, catalog[c]||''] : [c, items[c].qty]);
   return [head, ...body];
 }
-function fname(ext){
+function stamp(){
   const d = new Date(), p = n => String(n).padStart(2,'0');
-  return `remanent_${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.${ext}`;
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
-async function deliver(blob, name){
-  const file = new File([blob], name, {type:blob.type});
-  if(navigator.canShare?.({files:[file]})){
-    try{ await navigator.share({files:[file], title:name}); return; }catch(e){ if(e.name === 'AbortError') return; }
-  }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
-}
-$('btnCsv').onclick = () => {
-  if(!Object.keys(items).length) return toast('Brak pozycji do eksportu');
+function csvFile(name){
   const esc = v => { v = String(v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
   // Kod jako tekst, żeby Excel nie zjadł zer wiodących ani nie zamienił EAN na 5,9E+12
   const csv = rows().map((r,i) => r.map((v,j) => (i>0 && j===0) ? '="'+v+'"' : esc(v)).join(';')).join('\r\n');
-  deliver(new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'}), fname('csv'));
-};
-$('btnXlsx').onclick = () => {
-  if(!Object.keys(items).length) return toast('Brak pozycji do eksportu');
-  if(!window.XLSX) return toast('Nie wczytano biblioteki XLSX — użyj CSV');
+  return new File(['﻿'+csv], name, {type:'text/csv;charset=utf-8'});
+}
+function xlsxFile(name){
+  if(!window.XLSX) return null;
   const data = rows();
   const ws = XLSX.utils.aoa_to_sheet(data);
   for(let r=1; r<data.length; r++){ const ref = XLSX.utils.encode_cell({r, c:0}); ws[ref].t = 's'; ws[ref].z = '@'; }
-  ws['!cols'] = data[0].length === 3 ? [{wch:18},{wch:50},{wch:8}] : [{wch:18},{wch:8}];
+  ws['!cols'] = data[0].length === 3 ? [{wch:18},{wch:8},{wch:50}] : [{wch:18},{wch:8}];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Remanent');
   const out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
-  deliver(new Blob([out], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), fname('xlsx'));
+  return new File([out], name, {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+function reportFiles(){
+  const base = 'remanent_' + stamp();
+  return [csvFile(base + '.csv'), xlsxFile(base + '.xlsx')].filter(Boolean);
+}
+async function deliver(files){
+  if(navigator.canShare?.({files})){
+    try{ await navigator.share({files, title:files[0].name}); return; }catch(e){ if(e.name === 'AbortError') return; }
+  }
+  for(const f of files){
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  }
+}
+
+/* ---------- Zakończenie: wysyłka mailem przez skrypt PHP na serwerze ---------- */
+const DEFAULT_MAIL = 'jacek@lim-czestochowa.com.pl';
+let finFiles = null;
+function totals(){
+  const codes = Object.keys(items);
+  return {n: codes.length, sum: codes.reduce((s,c) => s + items[c].qty, 0)};
+}
+$('btnFinish').onclick = () => {
+  const {n, sum} = totals();
+  if(!n) return toast('Brak pozycji — nie ma czego wysłać');
+  finFiles = null;
+  $('finN').textContent = `${n} poz. · ${sum} szt.`;
+  $('finMail').value = opts.mailTo || DEFAULT_MAIL;
+  $('finErr').textContent = ''; $('fSaveRow').hidden = true;
+  $('fYes').disabled = false; $('fYes').textContent = 'Wyślij i zakończ';
+  $('dlgFinish').showModal();
+};
+$('fNo').onclick = () => $('dlgFinish').close();
+$('fSave').onclick = () => deliver(finFiles || reportFiles());
+$('fYes').onclick = async () => {
+  const to = $('finMail').value.trim();
+  if(!$('finMail').checkValidity() || !to){ $('finErr').textContent = 'Podaj poprawny adres e-mail'; return; }
+  opts.mailTo = to; save('opts', opts);
+  if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki w Ustawieniach'; $('fSaveRow').hidden = false; return; }
+  const {n, sum} = totals();
+  finFiles = reportFiles();
+  const fd = new FormData();
+  fd.append('key', opts.mailKey || '');
+  fd.append('to', to);
+  fd.append('subject', 'Remanent ' + stamp().replace('_', ' '));
+  fd.append('body', `Remanent ${stamp().replace('_', ' ')}\nPozycji: ${n}\nSztuk razem: ${sum}\n`);
+  for(const f of finFiles) fd.append('files[]', f, f.name);
+  $('fYes').disabled = true; $('fYes').textContent = 'Wysyłam…'; $('finErr').textContent = '';
+  try{
+    const r = await fetch(opts.mailUrl, {method:'POST', body:fd});
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  }catch(e){
+    $('finErr').textContent = 'Nie wysłano: ' + (e?.message || e) + '. Lista została bez zmian.';
+    $('fSaveRow').hidden = false;
+    $('fYes').disabled = false; $('fYes').textContent = 'Spróbuj ponownie';
+    return;
+  }
+  items = {}; persist();
+  $('dlgFinish').close();
+  toast(`Wysłano na ${to} — remanent zakończony`);
 };
 
 /* ---------- Katalog produktów (opcjonalny) ---------- */
 function catInfo(){
   const n = Object.keys(catalog).length;
   $('catInfo').textContent = n ? `Wczytano ${n} produktów — w raporcie pojawi się kolumna Nazwa.` :
-    'Opcjonalnie: plik z kolumną kodu (EAN) i nazwy, np. eksport z Base. Wtedy po skanie zobaczysz nazwę produktu.';
+    'Opcjonalnie: plik w układzie raportu (Kod | Ilość | Nazwa) albo inny z kolumną kodu i nazwy. Ilość jest pomijana.';
+  $('btnCatClear').hidden = !n;
 }
 $('btnCatalog').onclick = () => $('catFile').click();
+$('btnCatClear').onclick = () => $('dlgCat').showModal();
+$('kNo').onclick = () => $('dlgCat').close();
+$('kYes').onclick = () => { catalog = {}; save('catalog', catalog); catInfo(); render(); $('dlgCat').close(); toast('Lista produktów wyczyszczona'); };
 $('catFile').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
   let table;
   try{
     if(/\.xlsx$/i.test(f.name) && window.XLSX){
       const wb = XLSX.read(await f.arrayBuffer());
-      table = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:false});
+      // raw: kod zapisany w Excelu jako liczba nie zamieni się w „3,80024E+12”
+      table = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:true, defval:''});
     } else {
       const txt = (await f.text()).replace(/^﻿/,'');
       const first = txt.split(/\r?\n/)[0];
@@ -565,13 +653,24 @@ $('catFile').onchange = async e => {
       table = txt.split(/\r?\n/).filter(Boolean).map(l => l.split(delim).map(v => v.replace(/^"|"$/g,'').replace(/^=/,'').replace(/^"|"$/g,'').trim()));
     }
   }catch(err){ toast('Nie udało się odczytać pliku'); return; }
-  let ci = 0, ni = 1, start = 0;
-  const h = (table[0]||[]).map(x => strip(String(x||'')));
-  const fc = h.findIndex(x => /ean|kod|barcode|gtin/.test(x));
-  const fn = h.findIndex(x => /nazwa|name|produkt|tytul/.test(x));
-  if(fc >= 0 || fn >= 0){ start = 1; if(fc>=0) ci = fc; if(fn>=0) ni = fn; }
+  // Kolumny po nagłówku; czego nagłówek nie wskaże, szukamy po zawartości. Ilość zawsze pomijamy.
+  const h = (table[0]||[]).map(x => strip(String(x ?? '')).trim());
+  const hasHead = h.some(x => /ean|kod|barcode|gtin|nazwa|name|produkt|tytul|ilosc|qty|szt/.test(x));
+  let ci = h.findIndex(x => /ean|kod|barcode|gtin/.test(x));
+  let ni = h.findIndex((x,i) => i !== ci && /nazwa|name|produkt|tytul/.test(x));
+  const qi = h.findIndex(x => /ilosc|qty|szt/.test(x));
+  const body = hasHead ? table.slice(1) : table;
+  const cols = [...Array(Math.max(0, ...body.map(r => r.length))).keys()];
+  const vals = i => body.map(r => String(r[i] ?? '').trim()).filter(Boolean);
+  if(ci < 0) ci = cols.find(i => i !== qi && vals(i).some(v => /^\d{8,14}$/.test(v))) ?? 0;
+  if(ni < 0) ni = cols.find(i => i !== ci && i !== qi && vals(i).some(v => !/^[\d\s.,]+$/.test(v))) ?? -1;
+  if(ni < 0){ toast('Nie znaleziono kolumny z nazwą produktu'); e.target.value = ''; return; }
   const cat = {};
-  for(const r of table.slice(start)){ const c = String(r[ci]||'').trim(); if(c) cat[c] = String(r[ni]||'').trim(); }
+  for(const r of body){
+    let c = String(r[ci] ?? '').trim();
+    if(/^\d{12}$/.test(c) && isEan13('0' + c)) c = '0' + c;   // Excel gubi zero wiodące EAN-13
+    if(c) cat[c] = String(r[ni] ?? '').trim();
+  }
   catalog = cat; save('catalog', catalog); catInfo(); render();
   toast(`Wczytano ${Object.keys(cat).length} produktów`);
   e.target.value = '';
@@ -597,6 +696,10 @@ $('manualCode').addEventListener('keydown', e => { if(e.key === 'Enter') $('btnM
 for(const [id,key] of [['optAutoMic','autoMic'],['optAutoSave','autoSave'],['optSum','sum']]){
   $(id).checked = opts[key];
   $(id).onchange = () => { opts[key] = $(id).checked; save('opts', opts); };
+}
+for(const [id,key] of [['optMailUrl','mailUrl'],['optMailKey','mailKey']]){
+  $(id).value = opts[key] || '';
+  $(id).onchange = () => { opts[key] = $(id).value.trim(); save('opts', opts); };
 }
 document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
