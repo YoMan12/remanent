@@ -220,7 +220,14 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 <dialog id="dlgFinish">
   <h2>Zakończyć remanent?</h2>
   <p class="hint"><b id="finN"></b>. Pliki CSV i XLSX pójdą mailem, potem lista zostanie wyczyszczona.</p>
-  <label class="lbl" for="finMail">Wyślij na adres</label>
+  <div class="lbl">Rodzaj remanentu</div>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+    <input type="radio" name="finTryb" value="czesciowy" checked> Częściowy — tylko zeskanowane produkty
+  </label>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+    <input type="radio" name="finTryb" value="pelny"> Pełny — niezeskanowane produkty LIM- dostaną stan 0
+  </label>
+  <label class="lbl" for="finMail" style="display:block;margin-top:12px">Wyślij na adres</label>
   <input class="txt" id="finMail" type="email" inputmode="email" autocomplete="email">
   <div class="err" id="finErr"></div>
   <div class="btnrow">
@@ -546,7 +553,7 @@ $('dCancel').onclick = () => $('dlgEdit').close();
 
 $('btnClear').onclick = () => { $('clrN').textContent = Object.keys(items).length; $('dlgClear').showModal(); };
 $('cNo').onclick = () => $('dlgClear').close();
-$('cYes').onclick = () => { items = {}; persist(); $('dlgClear').close(); toast('Remanent zresetowany'); };
+$('cYes').onclick = () => { items = {}; persist(); save('remanentId', ''); $('dlgClear').close(); toast('Remanent zresetowany'); };
 
 /* ---------- Eksport ---------- */
 // Ten sam układ co przy wczytywaniu listy: Kod | Ilość | Nazwa (Nazwa tylko, gdy wczytano listę)
@@ -593,7 +600,19 @@ async function deliver(files){
 
 /* ---------- Zakończenie: wysyłka mailem przez skrypt PHP na serwerze ---------- */
 const DEFAULT_MAIL = 'jacek@lim-czestochowa.com.pl';
+const LOCK_MSG = 'W dni robocze 13:45–14:30 nie można zakończyć remanentu (zamówienia InnPro o 14:00). Spróbuj po 14:30.';
 let finFiles = null;
+// Okno zamówień InnPro: kontener w tym czasie zmienia stany LIM-, więc remanent musi poczekać
+function locked(){
+  const d = new Date(), day = d.getDay(), m = d.getHours()*60 + d.getMinutes();
+  return day >= 1 && day <= 5 && m >= 13*60+45 && m < 14*60+30;
+}
+// Id remanentu trzymamy do udanej wysyłki: ponowienie po błędzie nie tworzy drugiego wpisu w kolejce
+function remanentId(){
+  let id = load('remanentId', '');
+  if(!id){ id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); save('remanentId', id); }
+  return id;
+}
 const toBase64 = f => new Promise((ok, bad) => {
   const r = new FileReader();
   r.onload = () => ok(String(r.result).split(',')[1]);
@@ -607,7 +626,9 @@ function totals(){
 $('btnFinish').onclick = () => {
   const {n, sum} = totals();
   if(!n) return toast('Brak pozycji — nie ma czego wysłać');
+  if(locked()) return toast(LOCK_MSG);
   finFiles = null;
+  document.querySelector('input[name=finTryb][value=czesciowy]').checked = true;
   $('finN').textContent = `${n} poz. · ${sum} szt.`;
   $('finMail').value = opts.mailTo || DEFAULT_MAIL;
   $('finErr').textContent = ''; $('fSaveRow').hidden = true;
@@ -620,6 +641,7 @@ $('fYes').onclick = async () => {
   const to = $('finMail').value.trim();
   if(!$('finMail').checkValidity() || !to){ $('finErr').textContent = 'Podaj poprawny adres e-mail'; return; }
   opts.mailTo = to; save('opts', opts);
+  if(locked()){ $('finErr').textContent = LOCK_MSG; return; }
   if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki (⚙ u góry ekranu)'; $('fSaveRow').hidden = false; return; }
   const {n, sum} = totals();
   finFiles = reportFiles();
@@ -629,7 +651,13 @@ $('fYes').onclick = async () => {
   try{
     // Google Apps Script (tymczasowo): JSON jako text/plain, bez preflightu CORS; pliki w base64
     const files = await Promise.all(finFiles.map(async f => ({name:f.name, data:await toBase64(f)})));
-    const payload = {key:opts.mailKey || '', to, subject, body, files};
+    // Dane dla kolejki kontenera (art-repricer → Apilo); skrypt Google zapisuje je w arkuszu
+    const remanent = {
+      wersja:1, id:remanentId(), zakonczono:new Date().toISOString(),
+      tryb:document.querySelector('input[name=finTryb]:checked').value,
+      pozycje:Object.keys(items).map(c => ({ean:c, ilosc:items[c].qty}))
+    };
+    const payload = {key:opts.mailKey || '', to, subject, body, files, remanent};
     const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(payload)});
     /* Skrypt PHP na hostingu (serwer/mail.php) — wrócić do tego, gdy będzie dostęp do hostingu:
     const fd = new FormData();
@@ -646,7 +674,7 @@ $('fYes').onclick = async () => {
     $('fYes').disabled = false; $('fYes').textContent = 'Spróbuj ponownie';
     return;
   }
-  items = {}; persist();
+  items = {}; persist(); save('remanentId', '');
   $('dlgFinish').close();
   toast(`Wysłano na ${to} — remanent zakończony`);
 };
