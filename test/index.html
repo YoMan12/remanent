@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14181d">
+<title>Remanent TEST</title>
+<link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* Układ: jedna kolumna — kamera u góry, panel ilości, lista pozycji, pasek zakończenia na dole */
+:root{
+  --bg:#f3f4f2; --panel:#ffffff; --fg:#1b1f24; --muted:#5d6670; --line:#d9ddd8;
+  --accent:#e8a317; --accent-fg:#1b1f24; --ok:#2f8f4e; --bad:#c43d32;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14181d; --panel:#1e242b; --fg:#e9ece8; --muted:#97a1aa; --line:#2f3740;
+  --accent:#f0b429; --accent-fg:#14181d; --ok:#4cbf72; --bad:#ef6a5e; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 var(--sans)}
+body{padding:env(safe-area-inset-top,0) max(12px,env(safe-area-inset-right,0px)) calc(84px + env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
+[hidden]{display:none!important}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:12px 8px}
+h1{font:600 18px var(--mono);letter-spacing:.04em;margin:0;text-transform:uppercase}
+.stat{font:500 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+button{font:600 15px var(--sans);border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:10px;padding:12px 14px;min-height:46px;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button.danger{color:var(--bad)}
+button.ghost{background:transparent}
+button.icon{min-height:40px;padding:6px 10px;font-size:20px;line-height:1}
+/* Podgląd wykadrowany do poziomego paska — kod EAN i tak jest szeroki i niski */
+#camwrap{position:relative;border-radius:14px;overflow:hidden;background:#000;height:clamp(130px,22vh,200px)}
+#reader{width:100%!important;height:100%!important;border:0!important}
+#reader video{width:100%!important;height:100%!important;object-fit:cover;transform-origin:center;transition:transform .15s}
+#reader #qr-shaded-region,#reader img,#reader canvas{display:none!important}
+#aim{position:absolute;left:7%;right:7%;top:14%;bottom:14%;pointer-events:none}
+#aim b{position:absolute;width:22px;height:22px;border:3px solid var(--accent)}
+#aim b:nth-child(1){left:0;top:0;border-right:0;border-bottom:0;border-top-left-radius:8px}
+#aim b:nth-child(2){right:0;top:0;border-left:0;border-bottom:0;border-top-right-radius:8px}
+#aim b:nth-child(3){left:0;bottom:0;border-right:0;border-top:0;border-bottom-left-radius:8px}
+#aim b:nth-child(4){right:0;bottom:0;border-left:0;border-top:0;border-bottom-right-radius:8px}
+#aim i{position:absolute;left:4%;right:4%;top:50%;height:2px;margin-top:-1px;background:var(--bad);opacity:.85;box-shadow:0 0 6px var(--bad)}
+#camctl{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-top:8px}
+#camctl{flex-wrap:nowrap}
+#camctl label{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;font:500 13px var(--mono);color:var(--muted)}
+#zoom{flex:1;accent-color:var(--accent)}
+#zoomVal{min-width:3.2em;text-align:right;color:var(--fg);font-variant-numeric:tabular-nums}
+#camSel{flex:0 1 38%;min-width:0;padding:8px!important;font:500 14px var(--sans);padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg)}
+#focusRing{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid var(--accent);border-radius:50%;pointer-events:none;opacity:0;transition:opacity .4s}
+#focusRing.show{opacity:1}
+#camstart{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#e9ece8;text-align:center;padding:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
+.lbl{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.code{font:600 22px var(--mono);word-break:break-all}
+.name{color:var(--muted);margin-top:2px}
+.qtyrow{display:flex;gap:8px;align-items:stretch;margin-top:12px}
+#qty{flex:1;min-width:0;font:600 34px var(--mono);text-align:center;border:2px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);padding:4px}
+#mic{width:64px;font-size:22px}
+#mic.on{background:var(--bad);color:#fff;border-color:var(--bad);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.6}}
+@media (prefers-reduced-motion:reduce){#mic.on{animation:none}}
+#heard{min-height:20px;font-size:13px;color:var(--muted);margin-top:6px}
+.btnrow{display:flex;gap:8px;margin-top:10px}
+.btnrow button{flex:1}
+.prev{font-size:13px;color:var(--muted);margin-top:6px}
+#manual{display:flex;gap:8px;margin-top:10px}
+#manual input{flex:1;min-width:0;font:500 16px var(--mono);padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg)}
+ul{list-style:none;margin:0;padding:0}
+li{display:flex;align-items:center;gap:10px;padding:10px 2px;border-bottom:1px solid var(--line)}
+li .c{flex:1;min-width:0}
+li .c b{font:600 14px var(--mono);display:block;word-break:break-all}
+li .c span{font-size:12px;color:var(--muted)}
+li .q{font:600 20px var(--mono);font-variant-numeric:tabular-nums}
+li.flash{background:color-mix(in srgb,var(--accent) 22%,transparent)}
+.empty{color:var(--muted);text-align:center;padding:18px 0}
+footer{position:fixed;left:0;right:0;bottom:0;display:flex;gap:8px;background:var(--panel);border-top:1px solid var(--line);
+  padding:10px max(12px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
+footer button{flex:1}
+#toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:500;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.show{opacity:1}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--fg);width:min(92vw,420px);padding:16px}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+dialog h2{margin:0 0 8px;font:600 17px var(--sans)}
+dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center;padding:8px;border:2px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+.hint{font-size:13px;color:var(--muted)}
+.txt{display:block;width:100%;font:500 16px var(--sans);padding:10px;margin-top:6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+.err{color:var(--bad);font-size:13px;min-height:1.2em;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Remanent <span style="color:var(--bad)">TEST</span></h1>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="stat" id="stat">0 poz. · 0 szt.</span>
+    <button class="ghost icon" id="btnSet" aria-label="Ustawienia wysyłki">⚙</button>
+  </div>
+</header>
+
+<div id="camwrap">
+  <div id="reader"></div>
+  <div id="camstart">
+    <div>Zeskanuj kod kreskowy, potem powiedz ilość</div>
+    <button class="primary" id="btnCam">Włącz kamerę</button>
+  </div>
+  <div id="aim" hidden><b></b><b></b><b></b><b></b><i></i></div>
+  <div id="focusRing"></div>
+</div>
+
+<div id="scanHint" class="hint" style="min-height:1.2em;margin-top:6px"></div>
+<div id="camctl" hidden>
+  <label for="zoom">Zoom <input type="range" id="zoom" min="1" max="4" step="0.1" value="1.5"><span id="zoomVal">1.5×</span></label>
+  <select id="camSel" aria-label="Wybór aparatu"></select>
+</div>
+
+<div id="manual">
+  <input id="manualCode" inputmode="numeric" placeholder="EAN-13 ręcznie (13 cyfr)" maxlength="13" autocomplete="off">
+  <button id="btnManual">OK</button>
+</div>
+
+<section class="panel" id="entry" hidden>
+  <div class="lbl">Zeskanowano</div>
+  <div class="code" id="eCode"></div>
+  <div class="name" id="eName"></div>
+  <div class="prev" id="ePrev"></div>
+  <div class="qtyrow">
+    <input id="qty" type="number" inputmode="numeric" min="0" placeholder="ilość">
+    <button id="mic" aria-label="Powiedz ilość">🎤</button>
+  </div>
+  <div id="heard"></div>
+  <div class="btnrow">
+    <button class="ghost" id="btnCancel">Anuluj</button>
+    <button class="primary" id="btnSave">Zapisz</button>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="lbl" style="margin-bottom:4px">Policzone pozycje</div>
+  <ul id="list"></ul>
+  <div class="empty" id="empty">Lista jest pusta. Zeskanuj pierwszy produkt.</div>
+</section>
+
+<section class="panel">
+  <div class="lbl">Ustawienia</div>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
+    <input type="checkbox" id="optAutoMic" checked> Po zeskanowaniu od razu słuchaj ilości
+  </label>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
+    <input type="checkbox" id="optAutoSave" checked> Zapisz automatycznie po rozpoznaniu ilości
+  </label>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
+    <input type="checkbox" id="optSum" checked> Ten sam kod drugi raz: dodaj do ilości (wyłączone: zastąp)
+  </label>
+  <div class="btnrow">
+    <button class="danger" id="btnClear">Resetuj remanent</button>
+  </div>
+  <div class="btnrow">
+    <button id="btnCatalog">Wczytaj listę produktów (CSV/XLSX)</button>
+  </div>
+  <div class="btnrow">
+    <button class="danger" id="btnCatClear" hidden>Wyczyść listę produktów</button>
+  </div>
+  <div class="hint" id="catInfo" style="margin-top:6px"></div>
+  <input type="file" id="catFile" accept=".csv,.txt,.xlsx" hidden>
+</section>
+
+<footer>
+  <button class="primary" id="btnFinish">Zakończ remanent</button>
+</footer>
+
+<dialog id="dlgEdit">
+  <h2 id="dCode"></h2>
+  <div class="hint" id="dName" style="margin-bottom:10px"></div>
+  <input type="number" id="dQty" inputmode="numeric" min="0">
+  <div class="btnrow">
+    <button class="danger" id="dDel">Usuń</button>
+    <button id="dCancel">Anuluj</button>
+    <button class="primary" id="dOk">Zapisz</button>
+  </div>
+</dialog>
+
+<dialog id="dlgClear">
+  <h2>Zresetować remanent?</h2>
+  <p class="hint">Zniknie <b id="clrN"></b> pozycji. Nic nie zostanie wysłane.</p>
+  <div class="btnrow">
+    <button id="cNo">Anuluj</button>
+    <button class="danger" id="cYes">Resetuj</button>
+  </div>
+</dialog>
+
+<dialog id="dlgCat">
+  <h2>Wyczyścić listę produktów?</h2>
+  <p class="hint">Nazwy znikną z ekranu i z raportu. Policzone pozycje zostają.</p>
+  <div class="btnrow">
+    <button id="kNo">Anuluj</button>
+    <button class="danger" id="kYes">Wyczyść</button>
+  </div>
+</dialog>
+
+<dialog id="dlgSet">
+  <h2>Ustawienia wysyłki</h2>
+  <label class="lbl" for="optMailUrl">Adres skryptu</label>
+  <input class="txt" id="optMailUrl" type="url" inputmode="url" placeholder="https://script.google.com/…/exec" autocomplete="off">
+  <label class="lbl" for="optMailKey" style="display:block;margin-top:12px">Klucz wysyłki</label>
+  <input class="txt" id="optMailKey" type="password" autocomplete="off">
+  <div class="btnrow">
+    <button class="primary" id="sOk">Zamknij</button>
+  </div>
+</dialog>
+
+<dialog id="dlgFinish">
+  <h2>Zakończyć remanent?</h2>
+  <p class="hint"><b id="finN"></b>. Pliki CSV i XLSX pójdą mailem, potem lista zostanie wyczyszczona.</p>
+  <div class="lbl">Rodzaj remanentu</div>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+    <input type="radio" name="finTryb" value="czesciowy" checked> Częściowy — tylko zeskanowane produkty
+  </label>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+    <input type="radio" name="finTryb" value="pelny"> Pełny — niezeskanowane produkty LIM- dostaną stan 0
+  </label>
+  <label class="lbl" for="finMail" style="display:block;margin-top:12px">Wyślij na adres</label>
+  <input class="txt" id="finMail" type="email" inputmode="email" autocomplete="email">
+  <div class="err" id="finErr"></div>
+  <div class="btnrow">
+    <button id="fNo">Anuluj</button>
+    <button class="primary" id="fYes">Wyślij i zakończ</button>
+  </div>
+  <div class="btnrow" id="fSaveRow" hidden>
+    <button class="ghost" id="fSave">Zapisz pliki w telefonie</button>
+  </div>
+</dialog>
+
+<div id="toast" role="status"></div>
+
+<script>
+/* ---------- Liczby słownie (polski) ---------- */
+const strip = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ł/g,'l');
+const NUM = {};
+const add = (v, ...w) => w.forEach(x => NUM[strip(x)] = v);
+add(0,'zero'); add(1,'jeden','jedna','jedno','jedną','jednego'); add(2,'dwa','dwie','dwóch');
+add(3,'trzy','trzech'); add(4,'cztery','czterech'); add(5,'pięć','pięciu'); add(6,'sześć','sześciu');
+add(7,'siedem','siedmiu'); add(8,'osiem','ośmiu'); add(9,'dziewięć','dziewięciu');
+add(10,'dziesięć'); add(11,'jedenaście'); add(12,'dwanaście'); add(13,'trzynaście'); add(14,'czternaście');
+add(15,'piętnaście'); add(16,'szesnaście'); add(17,'siedemnaście'); add(18,'osiemnaście'); add(19,'dziewiętnaście');
+add(20,'dwadzieścia'); add(30,'trzydzieści'); add(40,'czterdzieści'); add(50,'pięćdziesiąt');
+add(60,'sześćdziesiąt'); add(70,'siedemdziesiąt'); add(80,'osiemdziesiąt'); add(90,'dziewięćdziesiąt');
+add(100,'sto'); add(200,'dwieście'); add(300,'trzysta'); add(400,'czterysta'); add(500,'pięćset');
+add(600,'sześćset'); add(700,'siedemset'); add(800,'osiemset'); add(900,'dziewięćset');
+const THOUSAND = new Set(['tysiac','tysiace','tysiecy']);
+const MILLION = new Set(['milion','miliony','milionow']);
+
+function parsePolishNumber(text){
+  if(!text) return null;
+  const t = strip(text).replace(/(\d)\s+(?=\d{3}\b)/g,'$1').replace(/[,.;:!?]/g,' ');
+  const tokens = t.split(/[\s-]+/).filter(Boolean);
+  let total = 0, cur = 0, found = false;
+  for(const w of tokens){
+    if(/^\d+$/.test(w)){ cur += parseInt(w,10); found = true; continue; }
+    if(w in NUM){ cur += NUM[w]; found = true; continue; }
+    if(w === 'pol' || w === 'polowa'){ continue; }
+    if(THOUSAND.has(w)){ total += (cur || 1) * 1000; cur = 0; found = true; continue; }
+    if(MILLION.has(w)){ total += (cur || 1) * 1000000; cur = 0; found = true; continue; }
+  }
+  return found ? total + cur : null;
+}
+
+/* ---------- Stan ---------- */
+const LS = k => 'remanent-test.'+k;   // osobna pamięć — nie miesza się z wersją produkcyjną
+const load = (k, d) => { try{ const v = localStorage.getItem(LS(k)); return v ? JSON.parse(v) : d; }catch{ return d; } };
+const save = (k, v) => { try{ localStorage.setItem(LS(k), JSON.stringify(v)); }catch{} };
+
+let items = load('items', {});        // code -> {qty, scans, t}
+let catalog = load('catalog', {});    // code -> name
+let opts = load('opts', {autoMic:true, autoSave:true, sum:true});
+if(!opts.mailUrl) opts.mailUrl = 'https://script.google.com/macros/s/AKfycbywLve-rPL-HSebWsI_Z3WrY83n0pjvui22bBkpyszeHNkAJzIFjWMZr9s9oeGYZfKwMw/exec';   // testowe wdrożenie skryptu Google
+let current = null;
+
+const $ = id => document.getElementById(id);
+
+function persist(){ save('items', items); render(); }
+
+function render(){
+  const codes = Object.keys(items).sort((a,b)=>items[b].t - items[a].t);
+  const list = $('list'); list.innerHTML = '';
+  let sum = 0;
+  for(const c of codes){
+    const it = items[c]; sum += it.qty;
+    const li = document.createElement('li'); li.dataset.code = c;
+    const d = document.createElement('div'); d.className = 'c';
+    const b = document.createElement('b'); b.textContent = c;
+    const s = document.createElement('span');
+    s.textContent = (catalog[c] ? catalog[c] + ' · ' : '') + (it.scans > 1 ? it.scans + '× skan.' : '');
+    d.append(b, s);
+    const q = document.createElement('div'); q.className = 'q'; q.textContent = it.qty;
+    li.append(d, q);
+    li.addEventListener('click', () => openEdit(c));
+    list.append(li);
+  }
+  $('empty').hidden = codes.length > 0;
+  $('stat').textContent = `${codes.length} poz. · ${sum} szt.`;
+}
+
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.h); toast.h = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+let actx;
+function beep(freq=1400, ms=90){
+  try{
+    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = freq; g.gain.value = .15; o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + ms/1000);
+  }catch{}
+  if(navigator.vibrate) navigator.vibrate(60);
+}
+
+/* ---------- Kamera ---------- */
+let scanner = null, scanning = false, lastCode = '', lastAt = 0;
+
+let starting = false;
+async function startCamera(){
+  if(starting || scanning) return;
+  starting = true;
+  try{ await startCameraInner(); } finally { starting = false; }
+}
+async function startCameraInner(){
+  if(!window.Html5Qrcode){ toast('Nie wczytano biblioteki skanera — sprawdź internet'); return; }
+  const F = Html5QrcodeSupportedFormats;
+  scanner = new Html5Qrcode('reader', {
+    verbose:false,
+    formatsToSupport:[F.EAN_13],
+    experimentalFeatures:{useBarCodeDetectorIfSupported:true}
+  });
+  const cam = opts.camId ? {deviceId:{exact:opts.camId}} : {facingMode:'environment'};
+  const cfg = {fps:12};   // skanujemy całą klatkę, kadrowanie jest tylko wizualne
+  try{
+    try{
+      // Wyższa rozdzielczość = ostrzejsze kreski przy małych kodach
+      await scanner.start(cam, {...cfg, videoConstraints:{...cam, width:{ideal:1920}, height:{ideal:1080}}}, onScan, ()=>{});
+    }catch(e1){
+      if(opts.camId){ opts.camId = ''; save('opts', opts); }
+      await scanner.start({facingMode:'environment'}, cfg, onScan, ()=>{});
+    }
+    scanning = true; $('camstart').hidden = true; $('camctl').hidden = false; $('aim').hidden = false;
+    await setupTrack();
+    fillCameras();
+    try{ await navigator.wakeLock?.request('screen'); }catch{}
+  }catch(e){
+    toast('Brak dostępu do kamery: ' + (e?.message || e));
+  }
+}
+
+/* --- ostrość i zoom: bezpośrednio na ścieżce wideo --- */
+let track = null, caps = {}, hwZoom = false;
+const videoEl = () => document.querySelector('#reader video');
+
+async function setupTrack(){
+  track = videoEl()?.srcObject?.getVideoTracks?.()[0] || null;
+  caps = (track && track.getCapabilities) ? track.getCapabilities() : {};
+  if(caps.focusMode?.includes('continuous')){
+    try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch{}
+  }
+  const z = $('zoom');
+  hwZoom = !!caps.zoom;
+  if(hwZoom){ z.min = caps.zoom.min; z.max = Math.min(caps.zoom.max, 8); z.step = caps.zoom.step || 0.1; }
+  else { z.min = 1; z.max = 3; z.step = 0.1; }
+  await setZoom(opts.zoom ?? 1.5);
+}
+
+async function setZoom(v){
+  v = Math.min(+$('zoom').max, Math.max(+$('zoom').min, +v));
+  $('zoom').value = v; $('zoomVal').textContent = (+v).toFixed(1) + '×';
+  opts.zoom = v; save('opts', opts);
+  const vid = videoEl();
+  if(hwZoom){
+    try{ await track.applyConstraints({advanced:[{zoom:v}]}); if(vid) vid.style.transform = ''; return; }catch{ hwZoom = false; }
+  }
+  if(vid) vid.style.transform = `scale(${v})`;   // zoom cyfrowy, gdy aparat nie obsługuje sprzętowego
+}
+
+async function tapFocus(ev){
+  if(!track || current) return;
+  const r = $('camwrap').getBoundingClientRect();
+  const x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+  const ring = $('focusRing'); ring.style.left = (x*100)+'%'; ring.style.top = (y*100)+'%';
+  ring.classList.add('show'); setTimeout(()=>ring.classList.remove('show'), 900);
+  try{
+    const c = {};
+    if(caps.pointsOfInterest !== undefined) c.pointsOfInterest = [{x, y}];
+    if(caps.focusMode?.includes('single-shot')) c.focusMode = 'single-shot';
+    else if(caps.focusMode?.includes('continuous')) c.focusMode = 'continuous';
+    await track.applyConstraints({advanced:[c]});
+    if(c.focusMode === 'single-shot') setTimeout(()=>track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{}), 1500);
+  }catch{}
+}
+
+async function fillCameras(){
+  let cams = [];
+  try{ cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); }catch{}
+  const back = cams.filter(c => !/front|przedni|user/i.test(c.label));
+  const list = back.length ? back : cams;
+  const sel = $('camSel');
+  sel.hidden = list.length < 2;
+  const activeId = track?.getSettings?.().deviceId;
+  sel.innerHTML = '';
+  list.forEach((c, i) => {
+    const o = document.createElement('option'); o.value = c.deviceId;
+    o.textContent = `Aparat ${i+1}` + (c.label ? ` (${c.label.replace(/camera2\s*/i,'').slice(0,24)})` : '');
+    if(c.deviceId === activeId) o.selected = true;
+    sel.append(o);
+  });
+}
+
+async function switchCamera(id){
+  opts.camId = id; save('opts', opts);
+  try{ await scanner.stop(); scanner.clear(); }catch{}
+  scanning = false;
+  await startCamera();
+}
+
+function pauseCam(){ if(scanner && scanning){ try{ scanner.pause(true); }catch{} } }
+function resumeCam(){ if(scanner && scanning){ try{ scanner.resume(); }catch{} } }
+
+/* EAN-13: 13 cyfr + poprawna cyfra kontrolna */
+function isEan13(c){
+  if(!/^\d{13}$/.test(c)) return false;
+  let sum = 0;
+  for(let i = 0; i < 12; i++) sum += (+c[i]) * (i % 2 ? 3 : 1);
+  return (10 - sum % 10) % 10 === +c[12];
+}
+
+// Kod przyjmujemy dopiero, gdy ten sam poprawny EAN-13 odczytamy 2 razy z rzędu
+let candidate = '', candHits = 0, candAt = 0, badAt = 0;
+function onScan(text){
+  if(current) return;
+  const code = String(text).replace(/\s/g,'');
+  const now = Date.now();
+  if(!isEan13(code)){
+    candidate = ''; candHits = 0;
+    if(now - badAt > 2000){ badAt = now; $('scanHint').textContent = 'Odczyt niepełny — przytrzymaj telefon nieruchomo'; }
+    return;
+  }
+  if(code === lastCode && now - lastAt < 2500) return;
+  if(code === candidate && now - candAt < 1500) candHits++;
+  else { candidate = code; candHits = 1; }
+  candAt = now;
+  if(candHits < 2) return;
+  candidate = ''; candHits = 0;
+  lastCode = code; lastAt = now;
+  $('scanHint').textContent = '';
+  beep();
+  openEntry(code);
+}
+
+/* ---------- Wpis ilości ---------- */
+function openEntry(code){
+  current = code;
+  pauseCam();
+  $('entry').hidden = false;
+  $('eCode').textContent = code;
+  $('eName').textContent = catalog[code] || '';
+  $('eName').hidden = !catalog[code];
+  const prev = items[code];
+  $('ePrev').textContent = prev ? `Już policzone: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
+  $('qty').value = ''; $('heard').textContent = '';
+  $('entry').scrollIntoView({behavior:'smooth', block:'nearest'});
+  if(opts.autoMic && SR) listen(); else $('qty').focus();
+}
+
+function closeEntry(){
+  stopListen();
+  current = null; $('entry').hidden = true;
+  lastAt = Date.now();
+  resumeCam();
+}
+
+function commit(){
+  const q = parseInt($('qty').value, 10);
+  if(!Number.isFinite(q) || q < 0){ toast('Podaj ilość'); $('qty').focus(); return; }
+  const code = current, prev = items[code];
+  if(prev){
+    prev.qty = opts.sum ? prev.qty + q : q; prev.scans++; prev.t = Date.now();
+  } else items[code] = {qty:q, scans:1, t:Date.now()};
+  persist();
+  toast(`${code}: ${items[code].qty} szt.`);
+  beep(900, 70);
+  closeEntry();
+  const li = document.querySelector(`li[data-code="${CSS.escape(code)}"]`);
+  if(li){ li.classList.add('flash'); setTimeout(()=>li.classList.remove('flash'), 900); }
+}
+
+/* ---------- Rozpoznawanie mowy ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null;
+if(!SR){ $('mic').disabled = true; $('mic').title = 'Ta przeglądarka nie rozpoznaje mowy — użyj Chrome'; }
+
+function listen(){
+  if(!SR) return;
+  stopListen();
+  rec = new SR();
+  rec.lang = 'pl-PL'; rec.interimResults = true; rec.maxAlternatives = 5; rec.continuous = false;
+  $('mic').classList.add('on'); $('heard').textContent = 'Słucham…';
+  rec.onresult = ev => {
+    const res = ev.results[ev.results.length-1];
+    const alts = Array.from(res).map(a => a.transcript);
+    $('heard').textContent = '„' + alts[0] + '”';
+    if(!res.isFinal) return;
+    const words = strip(alts[0]);
+    if(/\b(anuluj|pomin|stop)\b/.test(words)){ closeEntry(); toast('Anulowano'); return; }
+    let n = null;
+    for(const a of alts){ n = parsePolishNumber(a); if(n !== null) break; }
+    if(n === null){ $('heard').textContent += ' — nie rozpoznano liczby, powtórz albo wpisz'; return; }
+    $('qty').value = n;
+    $('heard').textContent = `„${alts[0]}” → ${n}`;
+    if(opts.autoSave) setTimeout(commit, 450);
+  };
+  rec.onerror = e => {
+    if(e.error === 'not-allowed') $('heard').textContent = 'Brak dostępu do mikrofonu';
+    else if(e.error === 'no-speech') $('heard').textContent = 'Nic nie usłyszałem — stuknij 🎤';
+    else $('heard').textContent = 'Błąd rozpoznawania: ' + e.error;
+  };
+  rec.onend = () => { $('mic').classList.remove('on'); rec = null; };
+  try{ rec.start(); }catch{}
+}
+function stopListen(){ if(rec){ try{ rec.abort(); }catch{} rec = null; } $('mic').classList.remove('on'); }
+
+/* ---------- Edycja / czyszczenie ---------- */
+let editing = null;
+function openEdit(code){
+  editing = code;
+  $('dCode').textContent = code;
+  $('dName').textContent = catalog[code] || '';
+  $('dQty').value = items[code].qty;
+  $('dlgEdit').showModal();
+}
+$('dOk').onclick = () => {
+  const q = parseInt($('dQty').value,10);
+  if(Number.isFinite(q) && q >= 0){ items[editing].qty = q; persist(); }
+  $('dlgEdit').close();
+};
+$('dDel').onclick = () => { delete items[editing]; persist(); $('dlgEdit').close(); toast('Usunięto pozycję'); };
+$('dCancel').onclick = () => $('dlgEdit').close();
+
+$('btnClear').onclick = () => { $('clrN').textContent = Object.keys(items).length; $('dlgClear').showModal(); };
+$('cNo').onclick = () => $('dlgClear').close();
+$('cYes').onclick = () => { items = {}; persist(); save('remanentId', ''); $('dlgClear').close(); toast('Remanent zresetowany'); };
+
+/* ---------- Eksport ---------- */
+// Ten sam układ co przy wczytywaniu listy: Kod | Ilość | Nazwa (Nazwa tylko, gdy wczytano listę)
+function rows(){
+  const hasCat = Object.keys(catalog).length > 0;
+  const head = hasCat ? ['Kod','Ilość','Nazwa'] : ['Kod','Ilość'];
+  const body = Object.keys(items).sort().map(c => hasCat ? [c, items[c].qty, catalog[c]||''] : [c, items[c].qty]);
+  return [head, ...body];
+}
+function stamp(){
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+function csvFile(name){
+  const esc = v => { v = String(v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
+  // Kod jako tekst, żeby Excel nie zjadł zer wiodących ani nie zamienił EAN na 5,9E+12
+  const csv = rows().map((r,i) => r.map((v,j) => (i>0 && j===0) ? '="'+v+'"' : esc(v)).join(';')).join('\r\n');
+  return new File(['﻿'+csv], name, {type:'text/csv;charset=utf-8'});
+}
+function xlsxFile(name){
+  if(!window.XLSX) return null;
+  const data = rows();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  for(let r=1; r<data.length; r++){ const ref = XLSX.utils.encode_cell({r, c:0}); ws[ref].t = 's'; ws[ref].z = '@'; }
+  ws['!cols'] = data[0].length === 3 ? [{wch:18},{wch:8},{wch:50}] : [{wch:18},{wch:8}];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Remanent');
+  const out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+  return new File([out], name, {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+function reportFiles(){
+  const base = 'remanent_' + stamp();
+  return [csvFile(base + '.csv'), xlsxFile(base + '.xlsx')].filter(Boolean);
+}
+async function deliver(files){
+  if(navigator.canShare?.({files})){
+    try{ await navigator.share({files, title:files[0].name}); return; }catch(e){ if(e.name === 'AbortError') return; }
+  }
+  for(const f of files){
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  }
+}
+
+/* ---------- Zakończenie: wysyłka mailem przez skrypt PHP na serwerze ---------- */
+const DEFAULT_MAIL = 'jacek@lim-czestochowa.com.pl';
+const LOCK_MSG = 'W dni robocze 13:45–14:30 nie można zakończyć remanentu (zamówienia InnPro o 14:00). Spróbuj po 14:30.';
+let finFiles = null;
+// Okno zamówień InnPro: kontener w tym czasie zmienia stany LIM-, więc remanent musi poczekać
+function locked(){
+  const d = new Date(), day = d.getDay(), m = d.getHours()*60 + d.getMinutes();
+  return day >= 1 && day <= 5 && m >= 13*60+45 && m < 14*60+30;
+}
+// Id remanentu trzymamy do udanej wysyłki: ponowienie po błędzie nie tworzy drugiego wpisu w kolejce
+function remanentId(){
+  let id = load('remanentId', '');
+  if(!id){ id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); save('remanentId', id); }
+  return id;
+}
+const toBase64 = f => new Promise((ok, bad) => {
+  const r = new FileReader();
+  r.onload = () => ok(String(r.result).split(',')[1]);
+  r.onerror = () => bad(r.error);
+  r.readAsDataURL(f);
+});
+function totals(){
+  const codes = Object.keys(items);
+  return {n: codes.length, sum: codes.reduce((s,c) => s + items[c].qty, 0)};
+}
+$('btnFinish').onclick = () => {
+  const {n, sum} = totals();
+  if(!n) return toast('Brak pozycji — nie ma czego wysłać');
+  if(locked()) return toast(LOCK_MSG);
+  finFiles = null;
+  document.querySelector('input[name=finTryb][value=czesciowy]').checked = true;
+  $('finN').textContent = `${n} poz. · ${sum} szt.`;
+  $('finMail').value = opts.mailTo || DEFAULT_MAIL;
+  $('finErr').textContent = ''; $('fSaveRow').hidden = true;
+  $('fYes').disabled = false; $('fYes').textContent = 'Wyślij i zakończ';
+  $('dlgFinish').showModal();
+};
+$('fNo').onclick = () => $('dlgFinish').close();
+$('fSave').onclick = () => deliver(finFiles || reportFiles());
+$('fYes').onclick = async () => {
+  const to = $('finMail').value.trim();
+  if(!$('finMail').checkValidity() || !to){ $('finErr').textContent = 'Podaj poprawny adres e-mail'; return; }
+  opts.mailTo = to; save('opts', opts);
+  if(locked()){ $('finErr').textContent = LOCK_MSG; return; }
+  if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki (⚙ u góry ekranu)'; $('fSaveRow').hidden = false; return; }
+  const {n, sum} = totals();
+  finFiles = reportFiles();
+  const subject = 'Remanent ' + stamp().replace('_', ' ');
+  const body = `${subject}\nPozycji: ${n}\nSztuk razem: ${sum}\n`;
+  $('fYes').disabled = true; $('fYes').textContent = 'Wysyłam…'; $('finErr').textContent = '';
+  try{
+    // Google Apps Script (tymczasowo): JSON jako text/plain, bez preflightu CORS; pliki w base64
+    const files = await Promise.all(finFiles.map(async f => ({name:f.name, data:await toBase64(f)})));
+    // Dane dla kolejki kontenera (art-repricer → Apilo); skrypt Google zapisuje je w arkuszu
+    const remanent = {
+      wersja:1, id:remanentId(), zakonczono:new Date().toISOString(),
+      tryb:document.querySelector('input[name=finTryb]:checked').value,
+      pozycje:Object.keys(items).map(c => ({ean:c, ilosc:items[c].qty}))
+    };
+    const payload = {key:opts.mailKey || '', to, subject, body, files, remanent};
+    const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(payload)});
+    /* Skrypt PHP na hostingu (serwer/mail.php) — wrócić do tego, gdy będzie dostęp do hostingu:
+    const fd = new FormData();
+    fd.append('key', opts.mailKey || ''); fd.append('to', to);
+    fd.append('subject', subject); fd.append('body', body);
+    for(const f of finFiles) fd.append('files[]', f, f.name);
+    const r = await fetch(opts.mailUrl, {method:'POST', body:fd});
+    */
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok || !j.ok) throw new Error(j.error || (r.ok ? 'nieoczekiwana odpowiedź skryptu' : 'HTTP ' + r.status));
+  }catch(e){
+    $('finErr').textContent = 'Nie wysłano: ' + (e?.message || e) + '. Lista została bez zmian.';
+    $('fSaveRow').hidden = false;
+    $('fYes').disabled = false; $('fYes').textContent = 'Spróbuj ponownie';
+    return;
+  }
+  items = {}; persist(); save('remanentId', '');
+  $('dlgFinish').close();
+  toast(`Wysłano na ${to} — remanent zakończony`);
+};
+
+/* ---------- Katalog produktów (opcjonalny) ---------- */
+function catInfo(){
+  const n = Object.keys(catalog).length;
+  $('catInfo').textContent = n ? `Wczytano ${n} produktów — w raporcie pojawi się kolumna Nazwa.` :
+    'Opcjonalnie: plik w układzie raportu (Kod | Ilość | Nazwa) albo inny z kolumną kodu i nazwy. Ilość jest pomijana.';
+  $('btnCatClear').hidden = !n;
+}
+$('btnCatalog').onclick = () => $('catFile').click();
+$('btnCatClear').onclick = () => $('dlgCat').showModal();
+$('kNo').onclick = () => $('dlgCat').close();
+$('kYes').onclick = () => { catalog = {}; save('catalog', catalog); catInfo(); render(); $('dlgCat').close(); toast('Lista produktów wyczyszczona'); };
+$('catFile').onchange = async e => {
+  const f = e.target.files[0]; if(!f) return;
+  let table;
+  try{
+    if(/\.xlsx$/i.test(f.name) && window.XLSX){
+      const wb = XLSX.read(await f.arrayBuffer());
+      // raw: kod zapisany w Excelu jako liczba nie zamieni się w „3,80024E+12”
+      table = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:true, defval:''});
+    } else {
+      const txt = (await f.text()).replace(/^﻿/,'');
+      const first = txt.split(/\r?\n/)[0];
+      const delim = [';','\t',','].sort((a,b)=>first.split(b).length - first.split(a).length)[0];
+      table = txt.split(/\r?\n/).filter(Boolean).map(l => l.split(delim).map(v => v.replace(/^"|"$/g,'').replace(/^=/,'').replace(/^"|"$/g,'').trim()));
+    }
+  }catch(err){ toast('Nie udało się odczytać pliku'); return; }
+  // Kolumny po nagłówku; czego nagłówek nie wskaże, szukamy po zawartości. Ilość zawsze pomijamy.
+  const h = (table[0]||[]).map(x => strip(String(x ?? '')).trim());
+  const hasHead = h.some(x => /ean|kod|barcode|gtin|nazwa|name|produkt|tytul|ilosc|qty|szt/.test(x));
+  let ci = h.findIndex(x => /ean|kod|barcode|gtin/.test(x));
+  let ni = h.findIndex((x,i) => i !== ci && /nazwa|name|produkt|tytul/.test(x));
+  const qi = h.findIndex(x => /ilosc|qty|szt/.test(x));
+  const body = hasHead ? table.slice(1) : table;
+  const cols = [...Array(Math.max(0, ...body.map(r => r.length))).keys()];
+  const vals = i => body.map(r => String(r[i] ?? '').trim()).filter(Boolean);
+  if(ci < 0) ci = cols.find(i => i !== qi && vals(i).some(v => /^\d{8,14}$/.test(v))) ?? 0;
+  if(ni < 0) ni = cols.find(i => i !== ci && i !== qi && vals(i).some(v => !/^[\d\s.,]+$/.test(v))) ?? -1;
+  if(ni < 0){ toast('Nie znaleziono kolumny z nazwą produktu'); e.target.value = ''; return; }
+  const cat = {};
+  for(const r of body){
+    let c = String(r[ci] ?? '').trim();
+    if(/^\d{12}$/.test(c) && isEan13('0' + c)) c = '0' + c;   // Excel gubi zero wiodące EAN-13
+    if(c) cat[c] = String(r[ni] ?? '').trim();
+  }
+  catalog = cat; save('catalog', catalog); catInfo(); render();
+  toast(`Wczytano ${Object.keys(cat).length} produktów`);
+  e.target.value = '';
+};
+
+/* ---------- Podpięcie ---------- */
+$('btnCam').onclick = startCamera;
+$('zoom').addEventListener('input', e => setZoom(e.target.value));
+$('camSel').addEventListener('change', e => switchCamera(e.target.value));
+$('camwrap').addEventListener('click', tapFocus);
+$('mic').onclick = () => rec ? stopListen() : listen();
+$('btnSave').onclick = commit;
+$('btnCancel').onclick = closeEntry;
+$('qty').addEventListener('keydown', e => { if(e.key === 'Enter') commit(); });
+$('qty').addEventListener('input', () => stopListen());
+$('btnManual').onclick = () => {
+  const c = $('manualCode').value.replace(/\s/g,'');
+  if(!c) return;
+  if(!isEan13(c)){ toast(/^\d{13}$/.test(c) ? 'Błędna cyfra kontrolna — sprawdź kod' : 'Kod EAN-13 ma mieć 13 cyfr'); return; }
+  $('manualCode').value=''; openEntry(c);
+};
+$('manualCode').addEventListener('keydown', e => { if(e.key === 'Enter') $('btnManual').click(); });
+for(const [id,key] of [['optAutoMic','autoMic'],['optAutoSave','autoSave'],['optSum','sum']]){
+  $(id).checked = opts[key];
+  $(id).onchange = () => { opts[key] = $(id).checked; save('opts', opts); };
+}
+for(const [id,key] of [['optMailUrl','mailUrl'],['optMailKey','mailKey']]){
+  $(id).value = opts[key] || '';
+  $(id).onchange = () => { opts[key] = $(id).value.trim(); save('opts', opts); };
+}
+$('btnSet').onclick = () => $('dlgSet').showModal();
+// Zapis także przy zamknięciu — na telefonie change nie zawsze przychodzi przed zamknięciem okna
+$('sOk').onclick = () => { for(const id of ['optMailUrl','optMailKey']) $(id).onchange(); $('dlgSet').close(); };
+document.addEventListener('visibilitychange', async () => {
+  if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
+});
+catInfo(); render();
+
+// Kamera startuje sama po otwarciu aplikacji; przycisk zostaje tylko jako zapas, gdy start się nie uda
+startCamera();
+// Po powrocie do aplikacji Android często wyłącza kamerę — włącz ją ponownie
+document.addEventListener('visibilitychange', async () => {
+  if(document.visibilityState !== 'visible' || !scanner) return;
+  if(track && track.readyState === 'ended'){
+    try{ await scanner.stop(); scanner.clear(); }catch{}
+    scanning = false; startCamera();
+  }
+});
+</script>
+</body>
+</html>
