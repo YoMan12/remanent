@@ -296,7 +296,7 @@ if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b5';
+const APP_VERSION = 'Yo-26.10.26-b6';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
@@ -583,6 +583,7 @@ function listen(retry = false){
     if(['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)){
       fatal = true; $('heard').textContent = 'Brak dostępu do mikrofonu';
     }
+    if(e.error !== 'aborted') $('micState').textContent += ` · błąd: ${e.error}`;   // diagnostyka
   };
   r.onend = () => {
     if(rec !== r) return;   // przerwane celowo albo zastąpione nowym słuchaniem
