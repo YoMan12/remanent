@@ -1,5 +1,5 @@
-// Odbiera z aplikacji Remanent pliki (CSV, XLSX) i wysyła je mailem z Twojego konta Google.
-// Prowadzi też kolejkę remanentów w arkuszu, z której co minutę pobiera je kontener art-repricer.
+// Prowadzi kolejkę remanentów z aplikacji Remanent w arkuszu, z której co minutę pobiera je kontener art-repricer
+// (raport mailem wysyła kontener). Starsza wersja aplikacji wysyła jeszcze pliki CSV/XLSX — te idą mailem stąd.
 // Instrukcja w README.md obok.
 
 // Klucze NIE są w kodzie — Ustawienia projektu → Właściwości skryptu:
@@ -34,19 +34,27 @@ function doGet() {
 }
 
 /* ---------- Aplikacja na telefonie ---------- */
+// Aplikacja wysyła same dane remanentu do kolejki; raport mailem wysyła kontener.
+// Pliki mailem tylko dla starszej wersji aplikacji, która wysyła je razem z adresem.
 function telefon(d) {
   if (!kluczOk(d.key, 'KLUCZ_TELEFON')) return out(false, 'Zły klucz wysyłki');
+  const maPliki = (d.files || []).length > 0;
+  if (!d.remanent && !maPliki) return out(false, 'Brak danych remanentu');
   const to = String(d.to || '').trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return out(false, 'Błędny adres e-mail');
-  const files = (d.files || []).slice(0, 4).map(f => {
+  if (maPliki && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return out(false, 'Błędny adres e-mail');
+  // Najpierw kolejka, potem mail: gdy mail się nie uda, telefon ponowi z tym samym id i nic się nie zdubluje
+  if (d.remanent) zapiszRemanent(d.remanent, to);
+  if (maPliki) wyslijPliki(d, to);
+  return out(true);
+}
+
+function wyslijPliki(d, to) {
+  const files = d.files.slice(0, 4).map(f => {
     const name = String(f.name).replace(/[^A-Za-z0-9_.-]/g, '_');
     const ext = name.split('.').pop().toLowerCase();
     if (!TYPES[ext]) throw new Error('Niedozwolony typ pliku');
     return Utilities.newBlob(Utilities.base64Decode(f.data), TYPES[ext], name);
   });
-  if (!files.length) return out(false, 'Brak plików');
-  // Najpierw kolejka, potem mail: gdy mail się nie uda, telefon ponowi z tym samym id i nic się nie zdubluje
-  if (d.remanent) zapiszRemanent(d.remanent, to);
   MailApp.sendEmail({
     to: to,
     subject: String(d.subject || 'Remanent').slice(0, 150),
@@ -54,7 +62,6 @@ function telefon(d) {
     name: 'Remanent',
     attachments: files
   });
-  return out(true);
 }
 
 function zapiszRemanent(r, to) {

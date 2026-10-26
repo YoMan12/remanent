@@ -2,9 +2,10 @@
 
 Tymczasowe zastępstwo dla `serwer/mail.php`, dopóki nie ma dostępu do hostingu.
 
-- **Telefon → skrypt:** pliki CSV/XLSX idą mailem (z konta Google właściciela skryptu,
-  limit ok. 100 odbiorców dziennie), a dane remanentu trafiają do kolejki w arkuszu
-  „Remanent — kolejka” (tworzy go skrypt).
+- **Telefon → skrypt:** dane remanentu trafiają do kolejki w arkuszu „Remanent — kolejka”
+  (tworzy go skrypt). Raport mailem wysyła kontener; kopia ostatniego remanentu zostaje
+  w telefonie. Starsza wersja aplikacji wysyła jeszcze pliki CSV/XLSX — te idą mailem
+  z konta Google właściciela skryptu (limit ok. 100 odbiorców dziennie).
 - **Kontener art-repricer → skrypt:** co minutę `{"akcja":"pobierz"}` zwraca remanenty
   ze statusem `nowy`, a `{"akcja":"zakoncz"}` ustawia status `test | zapisany | blad | recznie`.
 - **Alarm:** co 15 min. Jeśli remanent czeka dłużej niż 30 min, idzie mail
