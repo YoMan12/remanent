@@ -162,6 +162,9 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
     <input type="checkbox" id="optSum" checked> Ten sam kod drugi raz: dodaj do ilości (wyłączone: zastąp)
   </label>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
+    <input type="checkbox" id="optCamOff" checked> Wyłączaj kamerę podczas mówienia ilości (lepiej słychać; kamera wraca po ok. 1 s)
+  </label>
   <div class="btnrow">
     <button class="danger" id="btnClear">Resetuj remanent</button>
   </div>
@@ -288,10 +291,11 @@ const save = (k, v) => { try{ localStorage.setItem(LS(k), JSON.stringify(v)); }c
 let items = load('items', {});        // code -> {qty, scans, t}
 let catalog = load('catalog', {});    // code -> name
 let opts = load('opts', {autoMic:true, autoSave:true, sum:true});
+if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie włączona także przy zapisanych ustawieniach
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b2';
+const APP_VERSION = 'Yo-26.10.26-b3';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
@@ -324,13 +328,14 @@ function toast(msg){
   clearTimeout(toast.h); toast.h = setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
-let actx;
 function beep(freq=1400, ms=90){
   try{
-    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.frequency.value = freq; g.gain.value = .15; o.connect(g); g.connect(actx.destination);
-    o.start(); o.stop(actx.currentTime + ms/1000);
+    // Kanał dźwięku tylko na czas sygnału: otwarty na stałe włącza tłumienie echa i ścisza mikrofon
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = freq; g.gain.value = .15; o.connect(g); g.connect(ctx.destination);
+    o.onended = () => ctx.close().catch(()=>{});
+    o.start(); o.stop(ctx.currentTime + ms/1000);
   }catch{}
   if(navigator.vibrate) navigator.vibrate(60);
 }
@@ -338,11 +343,11 @@ function beep(freq=1400, ms=90){
 /* ---------- Kamera ---------- */
 let scanner = null, scanning = false, lastCode = '', lastAt = 0;
 
-let starting = false;
+let starting = false, camStopping = null;
 async function startCamera(){
   if(starting || scanning) return;
   starting = true;
-  try{ await startCameraInner(); } finally { starting = false; }
+  try{ if(camStopping) await camStopping; await startCameraInner(); } finally { starting = false; }
 }
 async function startCameraInner(){
   if(!window.Html5Qrcode){ toast('Nie wczytano biblioteki skanera — sprawdź internet'); return; }
@@ -440,6 +445,14 @@ async function switchCamera(id){
 }
 
 function pauseCam(){ if(scanner && scanning){ try{ scanner.pause(true); }catch{} } }
+// Pełne wyłączenie kamery na czas mówienia ilości: przy otwartej kamerze Chrome nagrywa mikrofon dużo ciszej
+function stopCam(){
+  if(!scanner || !scanning) return Promise.resolve();
+  scanning = false; track = null;
+  const s = scanner;
+  camStopping = (async () => { try{ await s.stop(); s.clear(); }catch{} camStopping = null; })();
+  return camStopping;
+}
 function resumeCam(){ if(scanner && scanning){ try{ scanner.resume(); }catch{} } }
 
 /* EAN-13: 13 cyfr + poprawna cyfra kontrolna */
@@ -476,7 +489,7 @@ function onScan(text){
 /* ---------- Wpis ilości ---------- */
 function openEntry(code){
   current = code;
-  pauseCam();
+  const camReady = opts.camOff ? stopCam() : (pauseCam(), Promise.resolve());
   $('entry').hidden = false;
   $('eCode').textContent = code;
   $('eName').textContent = catalog[code] || '';
@@ -486,14 +499,14 @@ function openEntry(code){
   $('qty').value = ''; $('heard').textContent = '';
   $('entry').scrollIntoView({behavior:'smooth', block:'nearest'});
   // Chwila przerwy po piknięciu, żeby rozpoznawanie nie złapało sygnału zamiast początku słowa
-  if(opts.autoMic && SR) setTimeout(() => { if(current === code) listen(); }, 300); else $('qty').focus();
+  if(opts.autoMic && SR) camReady.then(() => setTimeout(() => { if(current === code) listen(); }, 300)); else $('qty').focus();
 }
 
 function closeEntry(){
   stopListen();
   current = null; $('entry').hidden = true;
   lastAt = Date.now();
-  resumeCam();
+  if(opts.camOff) startCamera(); else resumeCam();
 }
 
 function commit(){
@@ -765,7 +778,7 @@ $('btnManual').onclick = () => {
   $('manualCode').value=''; openEntry(c);
 };
 $('manualCode').addEventListener('keydown', e => { if(e.key === 'Enter') $('btnManual').click(); });
-for(const [id,key] of [['optAutoMic','autoMic'],['optAutoSave','autoSave'],['optSum','sum']]){
+for(const [id,key] of [['optAutoMic','autoMic'],['optAutoSave','autoSave'],['optSum','sum'],['optCamOff','camOff']]){
   $(id).checked = opts[key];
   $(id).onchange = () => { opts[key] = $(id).checked; save('opts', opts); };
 }
