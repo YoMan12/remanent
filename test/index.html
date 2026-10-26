@@ -296,7 +296,7 @@ if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b6';
+const APP_VERSION = 'Yo-26.10.26-b7';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
@@ -555,7 +555,8 @@ function listen(retry = false){
   // reaguje dopiero na głośną mowę. Słuchanie kończymy sami, gdy padnie liczba.
   r.lang = 'pl-PL'; r.interimResults = true; r.continuous = true;
   $('mic').classList.add('on');
-  if(!retry) $('heard').textContent = 'Słucham…';   // przy ponowieniu zostaje komunikat z onend
+  // Samo „trzy” bywa za krótkie dla rozpoznawania — dwa słowa („trzy sztuki”) przechodzą pewnie
+  if(!retry) $('heard').textContent = 'Słucham… powiedz np. „trzy sztuki”';   // przy ponowieniu zostaje komunikat z onend
   // Wskaźnik: czy mikrofon ruszył, czy dociera dźwięk, czy rozpoznawanie uznało go za mowę
   const st = {mik:false, dzwiek:false, mowa:false};
   const showSt = () => $('micState').textContent =
@@ -568,7 +569,8 @@ function listen(retry = false){
     for(let i = ev.resultIndex; i < ev.results.length && !done; i++){
       const res = ev.results[i], text = res[0].transcript;
       if(text.trim()){ heard = text; $('heard').textContent = '„' + heard + '”'; }
-      if(!res.isFinal) continue;
+      // Puste wyniki (0%) przychodzą przed właściwym, gdy mowa jest krótka — czekamy dalej bez komunikatu
+      if(!res.isFinal || !text.trim()) continue;
       if(/\b(anuluj|pomin|stop)\b/.test(strip(text))){ done = true; closeEntry(); toast('Anulowano'); return; }
       const n = parsePolishNumber(text);
       if(n === null){ $('heard').textContent = `„${text}” to nie liczba — powiedz jeszcze raz`; continue; }
