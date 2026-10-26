@@ -64,6 +64,7 @@ button.icon{min-height:40px;padding:6px 10px;font-size:20px;line-height:1}
 .lbl{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .code{font:600 22px var(--mono);word-break:break-all}
 .name{color:var(--muted);margin-top:2px}
+.name.warn{color:var(--bad)}
 .qtyrow{display:flex;gap:8px;align-items:stretch;margin-top:12px}
 #qty{flex:1;min-width:0;font:600 34px var(--mono);text-align:center;border:2px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);padding:4px}
 #mic{width:64px;font-size:22px}
@@ -132,6 +133,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <div class="lbl">Zeskanowano</div>
   <div class="code" id="eCode"></div>
   <div class="name" id="eName"></div>
+  <div class="name" id="eMeta"></div>
   <div class="prev" id="ePrev"></div>
   <div class="qtyrow">
     <input id="qty" type="number" inputmode="numeric" min="0" placeholder="ilość">
@@ -175,7 +177,10 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
     </div>
   </div>
   <div class="btnrow">
-    <button id="btnCatalog">Wczytaj listę produktów (CSV/XLSX)</button>
+    <button id="btnCatSync" hidden>Odśwież listę produktów z Apilo</button>
+  </div>
+  <div class="btnrow">
+    <button id="btnCatalog">Wczytaj listę z pliku (CSV/XLSX)</button>
   </div>
   <div class="btnrow">
     <button class="danger" id="btnCatClear" hidden>Wyczyść listę produktów</button>
@@ -286,17 +291,19 @@ function parsePolishNumber(text){
 /* ---------- Stan ---------- */
 const LS = k => 'remanent-test.'+k;   // osobna pamięć — nie miesza się z wersją produkcyjną
 const load = (k, d) => { try{ const v = localStorage.getItem(LS(k)); return v ? JSON.parse(v) : d; }catch{ return d; } };
-const save = (k, v) => { try{ localStorage.setItem(LS(k), JSON.stringify(v)); }catch{} };
+const save = (k, v) => { try{ localStorage.setItem(LS(k), JSON.stringify(v)); return true; }catch{ return false; } };
 
 let items = load('items', {});        // code -> {qty, scans, t}
 let catalog = load('catalog', {});    // code -> name
+let catMeta = load('catMeta', {});    // code -> [status lim|nowy|recznie, sku, powód] — lista z kontenera
+let catSrc = load('catSrc', null);    // skąd lista: {typ:'apilo', wygenerowano, feed_z, liczby, liczba} albo {typ:'plik'}
 let opts = load('opts', {autoMic:true, autoSave:true, sum:true});
 if(!opts.mailUrl) opts.mailUrl = 'https://script.google.com/macros/s/AKfycbywLve-rPL-HSebWsI_Z3WrY83n0pjvui22bBkpyszeHNkAJzIFjWMZr9s9oeGYZfKwMw/exec';   // testowe wdrożenie skryptu Google
 if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie włączona także przy zapisanych ustawieniach
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b7';
+const APP_VERSION = 'Yo-26.10.26-b8';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
@@ -509,6 +516,9 @@ function openEntry(code){
   $('eCode').textContent = code;
   $('eName').textContent = catalog[code] || '';
   $('eName').hidden = !catalog[code];
+  const meta = metaText(code);
+  $('eMeta').textContent = meta; $('eMeta').hidden = !meta;
+  $('eMeta').classList.toggle('warn', meta.startsWith('⚠'));
   const prev = items[code];
   $('ePrev').textContent = prev ? `Już policzone: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
   $('qty').value = ''; $('heard').textContent = ''; $('micState').textContent = '';
@@ -740,17 +750,67 @@ $('fYes').onclick = async () => {
   toast('Remanent wysłany — raport przyjdzie mailem');
 };
 
-/* ---------- Katalog produktów (opcjonalny) ---------- */
+/* ---------- Katalog produktów: lista z Apilo/InnPro (kontener → skrypt Google) albo plik ---------- */
+const fmtT = s => { const d = new Date(s); return s && !isNaN(d) ? d.toLocaleString('pl-PL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : (s || '?'); };
 function catInfo(){
   const n = Object.keys(catalog).length;
-  $('catInfo').textContent = n ? `Wczytano ${n} produktów — w raporcie pojawi się kolumna Nazwa.` :
-    'Opcjonalnie: plik w układzie raportu (Kod | Ilość | Nazwa) albo inny z kolumną kodu i nazwy. Ilość jest pomijana.';
+  if(catSrc?.typ === 'apilo'){
+    const l = catSrc.liczby || {};
+    const stary = catSrc.feed_z && Date.now() - new Date(catSrc.feed_z) > 2 * 86400000;
+    $('catInfo').textContent = `Lista z Apilo i InnPro z ${fmtT(catSrc.wygenerowano)}: ${n} produktów ` +
+      `(${l.lim ?? '?'} na stanie, ${l.nowy ?? '?'} nowych z InnPro). Odświeża się sama przy uruchomieniu.` +
+      (stary ? ` ⚠ Plik InnPro z ${fmtT(catSrc.feed_z)} — nieaktualny.` : '');
+  } else {
+    $('catInfo').textContent = n ? `Wczytano z pliku ${n} produktów — w raporcie pojawi się kolumna Nazwa.` :
+      'Lista produktów pobiera się sama ze skryptu Google (⚙). Zapasowo: plik Kod | Ilość | Nazwa (ilość jest pomijana).';
+  }
   $('btnCatClear').hidden = !n;
+  $('btnCatSync').hidden = !opts.mailUrl;
 }
+// Podpowiedź po skanie: to samo, co zrobi kontener przy remanencie (wg listy z chwili eksportu)
+function metaText(code){
+  if(catSrc?.typ !== 'apilo') return '';
+  const m = catMeta[code], z = ` · podpowiedź z ${fmtT(catSrc.wygenerowano)}`;
+  if(!m) return '⚠ nieznany EAN — do ręcznej obsługi' + z;
+  if(m[0] === 'lim') return `na stanie · ${m[1]}` + z;
+  if(m[0] === 'nowy') return `nowy z InnPro · zostanie założony jako ${m[1]}` + z;
+  return `⚠ do ręcznej obsługi: ${m[2] || 'szczegóły w raporcie'}` + z;
+}
+async function gas(body){
+  const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(Object.assign({key:opts.mailKey || ''}, body))});
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+// Pełną listę (~1 MB) pobieramy tylko, gdy w skrypcie jest nowsza niż w telefonie
+async function syncCatalog(force = false){
+  if(!opts.mailUrl || !opts.mailKey) return;
+  try{
+    const info = await gas({akcja:'katalog_info'});
+    if(!info.liczba){ if(force) toast('W skrypcie Google nie ma jeszcze listy produktów'); return; }
+    const mam = catSrc?.typ === 'apilo' && catSrc.wygenerowano === info.wygenerowano && Object.keys(catalog).length;
+    if(mam && !force) return;
+    const j = await gas({akcja:'katalog_pobierz'});
+    const cat = {}, meta = {};
+    for(const [ean, s, sku, nazwa, powod] of j.pozycje){ cat[ean] = nazwa; meta[ean] = [s, sku, powod]; }
+    catalog = cat; catMeta = meta;
+    catSrc = {typ:'apilo', wygenerowano:j.wygenerowano, feed_z:j.feed_z, liczby:j.liczby, liczba:j.liczba};
+    // catSrc zapisujemy na końcu: przy braku miejsca następne uruchomienie pobierze listę jeszcze raz
+    if(save('catalog', catalog) && save('catMeta', catMeta)) save('catSrc', catSrc);
+    else toast('Za mało miejsca w telefonie na listę — działa do zamknięcia aplikacji');
+    catInfo(); render();
+    toast(`Pobrano listę produktów: ${j.liczba}`);
+  }catch(e){ if(force) toast('Nie udało się pobrać listy: ' + (e?.message || e)); }
+}
+$('btnCatSync').onclick = () => syncCatalog(true);
 $('btnCatalog').onclick = () => $('catFile').click();
 $('btnCatClear').onclick = () => $('dlgCat').showModal();
 $('kNo').onclick = () => $('dlgCat').close();
-$('kYes').onclick = () => { catalog = {}; save('catalog', catalog); catInfo(); render(); $('dlgCat').close(); toast('Lista produktów wyczyszczona'); };
+$('kYes').onclick = () => {
+  catalog = {}; catMeta = {}; catSrc = null;
+  save('catalog', catalog); save('catMeta', catMeta); save('catSrc', catSrc);
+  catInfo(); render(); $('dlgCat').close(); toast('Lista produktów wyczyszczona');
+};
 $('catFile').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
   let table;
@@ -784,7 +844,8 @@ $('catFile').onchange = async e => {
     if(/^\d{12}$/.test(c) && isEan13('0' + c)) c = '0' + c;   // Excel gubi zero wiodące EAN-13
     if(c) cat[c] = String(r[ni] ?? '').trim();
   }
-  catalog = cat; save('catalog', catalog); catInfo(); render();
+  catalog = cat; catMeta = {}; catSrc = {typ:'plik'};
+  save('catalog', catalog); save('catMeta', catMeta); save('catSrc', catSrc); catInfo(); render();
   toast(`Wczytano ${Object.keys(cat).length} produktów`);
   e.target.value = '';
 };
@@ -816,11 +877,15 @@ for(const [id,key] of [['optMailUrl','mailUrl'],['optMailKey','mailKey']]){
 }
 $('btnSet').onclick = () => $('dlgSet').showModal();
 // Zapis także przy zamknięciu — na telefonie change nie zawsze przychodzi przed zamknięciem okna
-$('sOk').onclick = () => { for(const id of ['optMailUrl','optMailKey']) $(id).onchange(); $('dlgSet').close(); };
+$('sOk').onclick = () => {
+  for(const id of ['optMailUrl','optMailKey']) $(id).onchange();
+  $('dlgSet').close(); catInfo(); syncCatalog();
+};
 document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
 });
 catInfo(); lastInfo(); render();
+syncCatalog();
 
 // Kamera startuje sama po otwarciu aplikacji; przycisk zostaje tylko jako zapas, gdy start się nie uda
 startCamera();
