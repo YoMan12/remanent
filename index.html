@@ -295,7 +295,7 @@ if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b3';
+const APP_VERSION = 'Yo-26.10.26-b4';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
@@ -347,9 +347,16 @@ let starting = false, camStopping = null;
 async function startCamera(){
   if(starting || scanning) return;
   starting = true;
-  try{ if(camStopping) await camStopping; await startCameraInner(); } finally { starting = false; }
+  try{
+    if(camStopping) await camStopping;
+    // Po wyłączeniu Android potrzebuje chwili na zwolnienie aparatu — kilka prób z przerwą
+    for(let i = 0; i < 3 && !scanning; i++){
+      if(i) await new Promise(r => setTimeout(r, 700));
+      await startCameraInner(i === 2);
+    }
+  } finally { starting = false; }
 }
-async function startCameraInner(){
+async function startCameraInner(last = true){
   if(!window.Html5Qrcode){ toast('Nie wczytano biblioteki skanera — sprawdź internet'); return; }
   const F = Html5QrcodeSupportedFormats;
   scanner = new Html5Qrcode('reader', {
@@ -364,15 +371,22 @@ async function startCameraInner(){
       // Wyższa rozdzielczość = ostrzejsze kreski przy małych kodach
       await scanner.start(cam, {...cfg, videoConstraints:{...cam, width:{ideal:1920}, height:{ideal:1080}}}, onScan, ()=>{});
     }catch(e1){
-      if(opts.camId){ opts.camId = ''; save('opts', opts); }
+      // Wybrany aparat kasujemy tylko, gdy go nie ma; zajęty aparat (NotReadableError) to nie powód
+      if(opts.camId && /NotFound|Overconstrained/i.test(e1?.name || '')){ opts.camId = ''; save('opts', opts); }
       await scanner.start({facingMode:'environment'}, cfg, onScan, ()=>{});
     }
+    $('scanHint').textContent = '';
     scanning = true; $('camstart').hidden = true; $('camctl').hidden = false; $('aim').hidden = false;
     await setupTrack();
     fillCameras();
     try{ await navigator.wakeLock?.request('screen'); }catch{}
   }catch(e){
-    toast('Brak dostępu do kamery: ' + (e?.message || e));
+    try{ scanner.clear(); }catch{}
+    if(!last) return;
+    // Trwały komunikat i przycisk startu zamiast znikającego toastu — inaczej zostaje czarny ekran bez wyjścia
+    $('camstart').hidden = false; $('aim').hidden = true;
+    $('scanHint').textContent = `Kamera nie wystartowała (${e?.name || 'błąd'}: ${e?.message || e}). ` +
+      'Zamknij inne karty z aplikacją albo inne aplikacje używające aparatu i stuknij „Włącz kamerę”.';
   }
 }
 
@@ -448,7 +462,7 @@ function pauseCam(){ if(scanner && scanning){ try{ scanner.pause(true); }catch{}
 // Pełne wyłączenie kamery na czas mówienia ilości: przy otwartej kamerze Chrome nagrywa mikrofon dużo ciszej
 function stopCam(){
   if(!scanner || !scanning) return Promise.resolve();
-  scanning = false; track = null;
+  scanning = false; track = null; $('aim').hidden = true;
   const s = scanner;
   camStopping = (async () => { try{ await s.stop(); s.clear(); }catch{} camStopping = null; })();
   return camStopping;
