@@ -138,6 +138,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
     <button id="mic" aria-label="Powiedz ilość">🎤</button>
   </div>
   <div id="heard"></div>
+  <div class="hint" id="micState"></div>
   <div class="btnrow">
     <button class="ghost" id="btnCancel">Anuluj</button>
     <button class="primary" id="btnSave">Zapisz</button>
@@ -295,7 +296,7 @@ if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b4';
+const APP_VERSION = 'Yo-26.10.26-b5';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
@@ -510,7 +511,7 @@ function openEntry(code){
   $('eName').hidden = !catalog[code];
   const prev = items[code];
   $('ePrev').textContent = prev ? `Już policzone: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
-  $('qty').value = ''; $('heard').textContent = '';
+  $('qty').value = ''; $('heard').textContent = ''; $('micState').textContent = '';
   $('entry').scrollIntoView({behavior:'smooth', block:'nearest'});
   // Chwila przerwy po piknięciu, żeby rozpoznawanie nie złapało sygnału zamiast początku słowa
   if(opts.autoMic && SR) camReady.then(() => setTimeout(() => { if(current === code) listen(); }, 300)); else $('qty').focus();
@@ -550,23 +551,33 @@ function listen(retry = false){
   tries = retry ? tries + 1 : 1;
   const r = rec = new SR();
   let done = false, fatal = false, heard = '';
-  r.lang = 'pl-PL'; r.interimResults = true; r.maxAlternatives = 5; r.continuous = false;
+  // Tryb ciągły, jak w demo Google: w trybie jednej wypowiedzi Chrome na Androidzie
+  // reaguje dopiero na głośną mowę. Słuchanie kończymy sami, gdy padnie liczba.
+  r.lang = 'pl-PL'; r.interimResults = true; r.continuous = true;
   $('mic').classList.add('on');
   if(!retry) $('heard').textContent = 'Słucham…';   // przy ponowieniu zostaje komunikat z onend
+  // Wskaźnik: czy mikrofon ruszył, czy dociera dźwięk, czy rozpoznawanie uznało go za mowę
+  const st = {mik:false, dzwiek:false, mowa:false};
+  const showSt = () => $('micState').textContent =
+    `🎤 mikrofon ${st.mik ? '✓' : '…'} · dźwięk ${st.dzwiek ? '✓' : '…'} · mowa ${st.mowa ? '✓' : '…'}`;
+  showSt();
+  r.onaudiostart = () => { st.mik = true; showSt(); };
+  r.onsoundstart = () => { st.dzwiek = true; showSt(); };
+  r.onspeechstart = () => { st.mowa = true; showSt(); };
   r.onresult = ev => {
-    const res = ev.results[ev.results.length-1];
-    const alts = Array.from(res).map(a => a.transcript);
-    if(alts[0].trim()){ heard = alts[0]; $('heard').textContent = '„' + heard + '”'; }
-    if(!res.isFinal) return;
-    const words = strip(alts[0]);
-    if(/\b(anuluj|pomin|stop)\b/.test(words)){ done = true; closeEntry(); toast('Anulowano'); return; }
-    let n = null;
-    for(const a of alts){ n = parsePolishNumber(a); if(n !== null) break; }
-    if(n === null) return;   // onend wznowi słuchanie
-    done = true;
-    $('qty').value = n;
-    $('heard').textContent = `„${alts[0]}” → ${n}`;
-    if(opts.autoSave) setTimeout(commit, 450);
+    for(let i = ev.resultIndex; i < ev.results.length && !done; i++){
+      const res = ev.results[i], text = res[0].transcript;
+      if(text.trim()){ heard = text; $('heard').textContent = '„' + heard + '”'; }
+      if(!res.isFinal) continue;
+      if(/\b(anuluj|pomin|stop)\b/.test(strip(text))){ done = true; closeEntry(); toast('Anulowano'); return; }
+      const n = parsePolishNumber(text);
+      if(n === null){ $('heard').textContent = `„${text}” to nie liczba — powiedz jeszcze raz`; continue; }
+      done = true;
+      try{ r.stop(); }catch{}
+      $('qty').value = n;
+      $('heard').textContent = `„${text}” → ${n}`;
+      if(opts.autoSave) setTimeout(commit, 450);
+    }
   };
   r.onerror = e => {
     if(['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)){
