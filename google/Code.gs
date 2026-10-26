@@ -18,10 +18,15 @@ const TYPES = {
 const KOLUMNY = ['id', 'zakonczono', 'tryb', 'pozycje', 'to', 'status', 'przyjeto', 'zmieniono', 'podsumowanie', 'blad', 'alarm', 'rewizja'];
 const K = Object.fromEntries(KOLUMNY.map((k, i) => [k, i]));
 const STATUSY_KONCOWE = ['test', 'zapisany', 'blad', 'recznie'];
+// Lista produktów dla telefonu (EAN → nazwa + podpowiedź, co zrobi kontener); zakładka „katalog” w arkuszu kolejki
+const AKCJE_TELEFONU = ['katalog_info', 'katalog_pobierz'];
+const KATALOG_KOLUMNY = ['ean', 'status', 'sku', 'nazwa', 'powod'];
+const STATUSY_KATALOGU = ['lim', 'nowy', 'recznie'];
 
 function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
+    if (AKCJE_TELEFONU.includes(d.akcja)) return telefonKatalog(d);
     return d.akcja ? kontener(d) : telefon(d);
   } catch (err) {
     return out(false, String(err.message || err));
@@ -99,7 +104,68 @@ function kontener(d) {
   if (!kluczOk(d.key, 'KLUCZ_KONTENER')) return out(false, 'Zły klucz kontenera');
   if (d.akcja === 'pobierz') return out(true, '', {remanenty: nowe()});
   if (d.akcja === 'zakoncz') return zakoncz(d);
+  if (d.akcja === 'katalog_zapisz') return katalogZapisz(d);
   return out(false, 'Nieznana akcja');
+}
+
+/* ---------- Lista produktów: kontener zapisuje, telefon pobiera ---------- */
+function katalogZapisz(d) {
+  if (d.wersja !== 1) return out(false, 'Nieobsługiwana wersja katalogu');
+  const poz = d.pozycje;
+  if (!Array.isArray(poz) || !poz.length) return out(false, 'Katalog bez pozycji');
+  const wiersze = poz.map(p => {
+    if (!Array.isArray(p) || !/^\d{13}$/.test(String(p[0])) || !STATUSY_KATALOGU.includes(p[1])) {
+      throw new Error('Błędna pozycja katalogu: ' + JSON.stringify(p).slice(0, 80));
+    }
+    return [String(p[0]), p[1], String(p[2] || ''), String(p[3] || '').slice(0, 120), String(p[4] || '')];
+  });
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const sh = katalogArkusz(wiersze.length + 1);
+    sh.getRange(1, 1, wiersze.length + 1, KATALOG_KOLUMNY.length).setValues([KATALOG_KOLUMNY].concat(wiersze));
+    P.setProperties({
+      KATALOG_WYGENEROWANO: String(d.wygenerowano || ''),
+      KATALOG_FEED_Z: String(d.feed_z || ''),
+      KATALOG_LICZBY: JSON.stringify(d.liczby || {}),
+      KATALOG_N: String(wiersze.length),
+      KATALOG_ZAPISANO: teraz()
+    });
+  } finally {
+    lock.releaseLock();
+  }
+  return out(true, '', {liczba: wiersze.length});
+}
+
+// Zakładka „katalog” przycięta dokładnie do liczby wierszy: mniej komórek = szybszy zapis i odczyt
+function katalogArkusz(n) {
+  const ss = arkusz().getParent();
+  const sh = ss.getSheetByName('katalog') || ss.insertSheet('katalog');
+  sh.clearContents();
+  const kol = KATALOG_KOLUMNY.length;
+  if (sh.getMaxColumns() > kol) sh.deleteColumns(kol + 1, sh.getMaxColumns() - kol);
+  if (sh.getMaxRows() < n) sh.insertRowsAfter(sh.getMaxRows(), n - sh.getMaxRows());
+  else if (sh.getMaxRows() > n) sh.deleteRows(n + 1, sh.getMaxRows() - n);
+  sh.getRange(1, 1, n, kol).setNumberFormat('@');   // EAN-y jako tekst
+  return sh;
+}
+
+function katalogInfo() {
+  return {
+    wygenerowano: P.getProperty('KATALOG_WYGENEROWANO') || '',
+    feed_z: P.getProperty('KATALOG_FEED_Z') || '',
+    liczby: JSON.parse(P.getProperty('KATALOG_LICZBY') || '{}'),
+    liczba: Number(P.getProperty('KATALOG_N') || 0)
+  };
+}
+
+function telefonKatalog(d) {
+  if (!kluczOk(d.key, 'KLUCZ_TELEFON')) return out(false, 'Zły klucz wysyłki');
+  const info = katalogInfo();
+  if (d.akcja === 'katalog_info' || !info.liczba) return out(true, '', info);
+  const sh = arkusz().getParent().getSheetByName('katalog');
+  const pozycje = sh ? sh.getRange(2, 1, info.liczba, KATALOG_KOLUMNY.length).getValues() : [];
+  return out(true, '', Object.assign(info, {pozycje: pozycje}));
 }
 
 function nowe() {
