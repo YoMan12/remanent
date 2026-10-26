@@ -162,6 +162,12 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <div class="btnrow">
     <button class="danger" id="btnClear">Resetuj remanent</button>
   </div>
+  <div id="lastRow" hidden>
+    <div class="hint" id="lastInfo" style="margin-top:12px"></div>
+    <div class="btnrow" style="margin-top:6px">
+      <button id="btnLast">Zapisz pliki ostatniego remanentu</button>
+    </div>
+  </div>
   <div class="btnrow">
     <button id="btnCatalog">Wczytaj listę produktów (CSV/XLSX)</button>
   </div>
@@ -218,7 +224,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 
 <dialog id="dlgFinish">
   <h2>Zakończyć remanent?</h2>
-  <p class="hint"><b id="finN"></b>. Pliki CSV i XLSX pójdą mailem, potem lista zostanie wyczyszczona.</p>
+  <p class="hint"><b id="finN"></b>. Remanent trafi do przetworzenia, a lista w telefonie zostanie wyczyszczona. Raport przyjdzie mailem (zwykle do 2 min); kopia zostaje w Ustawieniach → Ostatni remanent.</p>
   <div class="lbl">Rodzaj remanentu</div>
   <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
     <input type="radio" name="finTryb" value="czesciowy" checked> Częściowy — tylko zeskanowane produkty
@@ -226,8 +232,6 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
     <input type="radio" name="finTryb" value="pelny"> Pełny — niezeskanowane produkty LIM- dostaną stan 0
   </label>
-  <label class="lbl" for="finMail" style="display:block;margin-top:12px">Wyślij na adres</label>
-  <input class="txt" id="finMail" type="email" inputmode="email" autocomplete="email">
   <div class="err" id="finErr"></div>
   <div class="btnrow">
     <button id="fNo">Anuluj</button>
@@ -557,25 +561,23 @@ $('cYes').onclick = () => { items = {}; persist(); save('remanentId', ''); $('dl
 
 /* ---------- Eksport ---------- */
 // Ten sam układ co przy wczytywaniu listy: Kod | Ilość | Nazwa (Nazwa tylko, gdy wczytano listę)
-function rows(){
-  const hasCat = Object.keys(catalog).length > 0;
-  const head = hasCat ? ['Kod','Ilość','Nazwa'] : ['Kod','Ilość'];
-  const body = Object.keys(items).sort().map(c => hasCat ? [c, items[c].qty, catalog[c]||''] : [c, items[c].qty]);
+function rows(it = items, names = Object.keys(catalog).length ? catalog : null){
+  const head = names ? ['Kod','Ilość','Nazwa'] : ['Kod','Ilość'];
+  const body = Object.keys(it).sort().map(c => names ? [c, it[c].qty, names[c]||''] : [c, it[c].qty]);
   return [head, ...body];
 }
 function stamp(){
   const d = new Date(), p = n => String(n).padStart(2,'0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
-function csvFile(name){
+function csvFile(name, data){
   const esc = v => { v = String(v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
   // Kod jako tekst, żeby Excel nie zjadł zer wiodących ani nie zamienił EAN na 5,9E+12
-  const csv = rows().map((r,i) => r.map((v,j) => (i>0 && j===0) ? '="'+v+'"' : esc(v)).join(';')).join('\r\n');
+  const csv = data.map((r,i) => r.map((v,j) => (i>0 && j===0) ? '="'+v+'"' : esc(v)).join(';')).join('\r\n');
   return new File(['﻿'+csv], name, {type:'text/csv;charset=utf-8'});
 }
-function xlsxFile(name){
+function xlsxFile(name, data){
   if(!window.XLSX) return null;
-  const data = rows();
   const ws = XLSX.utils.aoa_to_sheet(data);
   for(let r=1; r<data.length; r++){ const ref = XLSX.utils.encode_cell({r, c:0}); ws[ref].t = 's'; ws[ref].z = '@'; }
   ws['!cols'] = data[0].length === 3 ? [{wch:18},{wch:8},{wch:50}] : [{wch:18},{wch:8}];
@@ -583,10 +585,28 @@ function xlsxFile(name){
   const out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
   return new File([out], name, {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
-function reportFiles(){
-  const base = 'remanent_' + stamp();
-  return [csvFile(base + '.csv'), xlsxFile(base + '.xlsx')].filter(Boolean);
+function reportFiles(data = rows(), base = 'remanent_' + stamp()){
+  return [csvFile(base + '.csv', data), xlsxFile(base + '.xlsx', data)].filter(Boolean);
 }
+
+/* ---------- Kopia bezpieczeństwa: ostatni wysłany remanent zostaje w telefonie ---------- */
+function saveLast(tryb){
+  const names = Object.keys(catalog).length ? Object.fromEntries(Object.keys(items).map(c => [c, catalog[c] || ''])) : null;
+  save('ostatni', {stamp:stamp(), tryb, items, names});
+  lastInfo();
+}
+function lastInfo(){
+  const l = load('ostatni', null);
+  $('lastRow').hidden = !l;
+  if(!l) return;
+  const codes = Object.keys(l.items), sum = codes.reduce((s,c) => s + l.items[c].qty, 0);
+  $('lastInfo').textContent = `Ostatni remanent: ${l.stamp.replace(/_(\d\d)(\d\d)$/, ' $1:$2')} · ` +
+    `${l.tryb === 'pelny' ? 'pełny' : 'częściowy'} · ${codes.length} poz. · ${sum} szt.`;
+}
+$('btnLast').onclick = () => {
+  const l = load('ostatni', null);
+  if(l) deliver(reportFiles(rows(l.items, l.names), 'remanent_' + l.stamp));
+};
 async function deliver(files){
   if(navigator.canShare?.({files})){
     try{ await navigator.share({files, title:files[0].name}); return; }catch(e){ if(e.name === 'AbortError') return; }
@@ -598,8 +618,7 @@ async function deliver(files){
   }
 }
 
-/* ---------- Zakończenie: wysyłka mailem przez skrypt PHP na serwerze ---------- */
-const DEFAULT_MAIL = 'jacek@lim-czestochowa.com.pl';
+/* ---------- Zakończenie: kolejka w skrypcie Google → kontener art-repricer → Apilo, raport mailem z kontenera ---------- */
 const LOCK_MSG = 'W dni robocze 13:45–14:30 nie można zakończyć remanentu (zamówienia InnPro o 14:00). Spróbuj po 14:30.';
 let finFiles = null;
 // Okno zamówień InnPro: kontener w tym czasie zmienia stany LIM-, więc remanent musi poczekać
@@ -613,12 +632,6 @@ function remanentId(){
   if(!id){ id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); save('remanentId', id); }
   return id;
 }
-const toBase64 = f => new Promise((ok, bad) => {
-  const r = new FileReader();
-  r.onload = () => ok(String(r.result).split(',')[1]);
-  r.onerror = () => bad(r.error);
-  r.readAsDataURL(f);
-});
 function totals(){
   const codes = Object.keys(items);
   return {n: codes.length, sum: codes.reduce((s,c) => s + items[c].qty, 0)};
@@ -630,7 +643,6 @@ $('btnFinish').onclick = () => {
   finFiles = null;
   document.querySelector('input[name=finTryb][value=czesciowy]').checked = true;
   $('finN').textContent = `${n} poz. · ${sum} szt.`;
-  $('finMail').value = opts.mailTo || DEFAULT_MAIL;
   $('finErr').textContent = ''; $('fSaveRow').hidden = true;
   $('fYes').disabled = false; $('fYes').textContent = 'Wyślij i zakończ';
   $('dlgFinish').showModal();
@@ -638,34 +650,19 @@ $('btnFinish').onclick = () => {
 $('fNo').onclick = () => $('dlgFinish').close();
 $('fSave').onclick = () => deliver(finFiles || reportFiles());
 $('fYes').onclick = async () => {
-  const to = $('finMail').value.trim();
-  if(!$('finMail').checkValidity() || !to){ $('finErr').textContent = 'Podaj poprawny adres e-mail'; return; }
-  opts.mailTo = to; save('opts', opts);
   if(locked()){ $('finErr').textContent = LOCK_MSG; return; }
   if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki (⚙ u góry ekranu)'; $('fSaveRow').hidden = false; return; }
-  const {n, sum} = totals();
   finFiles = reportFiles();
-  const subject = 'Remanent ' + stamp().replace('_', ' ');
-  const body = `${subject}\nPozycji: ${n}\nSztuk razem: ${sum}\n`;
+  const tryb = document.querySelector('input[name=finTryb]:checked').value;
   $('fYes').disabled = true; $('fYes').textContent = 'Wysyłam…'; $('finErr').textContent = '';
   try{
-    // Google Apps Script (tymczasowo): JSON jako text/plain, bez preflightu CORS; pliki w base64
-    const files = await Promise.all(finFiles.map(async f => ({name:f.name, data:await toBase64(f)})));
-    // Dane dla kolejki kontenera (art-repricer → Apilo); skrypt Google zapisuje je w arkuszu
+    // Same dane remanentu (JSON jako text/plain, bez preflightu CORS) — skrypt Google zapisuje je w kolejce
+    // dla kontenera; maila z plikami już nie ma (serwer/mail.php to stary wariant wysyłki plików)
     const remanent = {
-      wersja:1, id:remanentId(), zakonczono:new Date().toISOString(),
-      tryb:document.querySelector('input[name=finTryb]:checked').value,
+      wersja:1, id:remanentId(), zakonczono:new Date().toISOString(), tryb,
       pozycje:Object.keys(items).map(c => ({ean:c, ilosc:items[c].qty}))
     };
-    const payload = {key:opts.mailKey || '', to, subject, body, files, remanent};
-    const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(payload)});
-    /* Skrypt PHP na hostingu (serwer/mail.php) — wrócić do tego, gdy będzie dostęp do hostingu:
-    const fd = new FormData();
-    fd.append('key', opts.mailKey || ''); fd.append('to', to);
-    fd.append('subject', subject); fd.append('body', body);
-    for(const f of finFiles) fd.append('files[]', f, f.name);
-    const r = await fetch(opts.mailUrl, {method:'POST', body:fd});
-    */
+    const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify({key:opts.mailKey || '', remanent})});
     const j = await r.json().catch(() => ({}));
     if(!r.ok || !j.ok) throw new Error(j.error || (r.ok ? 'nieoczekiwana odpowiedź skryptu' : 'HTTP ' + r.status));
   }catch(e){
@@ -674,9 +671,10 @@ $('fYes').onclick = async () => {
     $('fYes').disabled = false; $('fYes').textContent = 'Spróbuj ponownie';
     return;
   }
+  saveLast(tryb);
   items = {}; persist(); save('remanentId', '');
   $('dlgFinish').close();
-  toast(`Wysłano na ${to} — remanent zakończony`);
+  toast('Remanent wysłany — raport przyjdzie mailem');
 };
 
 /* ---------- Katalog produktów (opcjonalny) ---------- */
@@ -759,7 +757,7 @@ $('sOk').onclick = () => { for(const id of ['optMailUrl','optMailKey']) $(id).on
 document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
 });
-catInfo(); render();
+catInfo(); lastInfo(); render();
 
 // Kamera startuje sama po otwarciu aplikacji; przycisk zostaje tylko jako zapas, gdy start się nie uda
 startCamera();
