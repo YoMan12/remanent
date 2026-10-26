@@ -32,7 +32,8 @@ body{padding:env(safe-area-inset-top,0) max(12px,env(safe-area-inset-right,0px))
 header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:12px 8px}
 h1{font:600 18px var(--mono);letter-spacing:.04em;margin:0;text-transform:uppercase}
 .stat{font:500 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
-.ver{font:500 11px var(--mono);color:var(--muted);white-space:nowrap}
+/* Wersja w tej samej linii co ostatnie słowo tytułu (na wąskim ekranie: obok „TEST”) */
+.ver{font:500 11px var(--mono);color:var(--muted);white-space:nowrap;text-transform:none;letter-spacing:0;margin-left:8px;vertical-align:middle}
 button{font:600 15px var(--sans);border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:10px;padding:12px 14px;min-height:46px;cursor:pointer}
 button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
@@ -100,10 +101,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </head>
 <body>
 <header>
-  <div style="display:flex;align-items:baseline;gap:8px;min-width:0">
-    <h1>Remanent</h1>
-    <span class="ver" id="ver"></span>
-  </div>
+  <h1>Remanent<span class="ver" id="ver"></span></h1>
   <div style="display:flex;align-items:center;gap:8px">
     <span class="stat" id="stat">0 poz. · 0 szt.</span>
     <button class="ghost icon" id="btnSet" aria-label="Ustawienia wysyłki">⚙</button>
@@ -256,6 +254,7 @@ const NUM = {};
 const add = (v, ...w) => w.forEach(x => NUM[strip(x)] = v);
 add(0,'zero'); add(1,'jeden','jedna','jedno','jedną','jednego'); add(2,'dwa','dwie','dwóch');
 add(3,'trzy','trzech'); add(4,'cztery','czterech'); add(5,'pięć','pięciu'); add(6,'sześć','sześciu');
+add(3,'czy'); add(6,'cześć');   // częste przekłamania rozpoznawania przy samym liczebniku
 add(7,'siedem','siedmiu'); add(8,'osiem','ośmiu'); add(9,'dziewięć','dziewięciu');
 add(10,'dziesięć'); add(11,'jedenaście'); add(12,'dwanaście'); add(13,'trzynaście'); add(14,'czternaście');
 add(15,'piętnaście'); add(16,'szesnaście'); add(17,'siedemnaście'); add(18,'osiemnaście'); add(19,'dziewiętnaście');
@@ -292,7 +291,7 @@ let opts = load('opts', {autoMic:true, autoSave:true, sum:true});
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b1';
+const APP_VERSION = 'Yo-26.10.26-b2';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
@@ -486,7 +485,8 @@ function openEntry(code){
   $('ePrev').textContent = prev ? `Już policzone: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
   $('qty').value = ''; $('heard').textContent = '';
   $('entry').scrollIntoView({behavior:'smooth', block:'nearest'});
-  if(opts.autoMic && SR) listen(); else $('qty').focus();
+  // Chwila przerwy po piknięciu, żeby rozpoznawanie nie złapało sygnału zamiast początku słowa
+  if(opts.autoMic && SR) setTimeout(() => { if(current === code) listen(); }, 300); else $('qty').focus();
 }
 
 function closeEntry(){
@@ -513,38 +513,52 @@ function commit(){
 
 /* ---------- Rozpoznawanie mowy ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null;
+let rec = null, tries = 0;
+const MAX_TRIES = 3;   // słuchanie wznawia się samo, gdy nie padła rozpoznana liczba
 if(!SR){ $('mic').disabled = true; $('mic').title = 'Ta przeglądarka nie rozpoznaje mowy — użyj Chrome'; }
 
-function listen(){
+function listen(retry = false){
   if(!SR) return;
   stopListen();
-  rec = new SR();
-  rec.lang = 'pl-PL'; rec.interimResults = true; rec.maxAlternatives = 5; rec.continuous = false;
-  $('mic').classList.add('on'); $('heard').textContent = 'Słucham…';
-  rec.onresult = ev => {
+  tries = retry ? tries + 1 : 1;
+  const r = rec = new SR();
+  let done = false, fatal = false, heard = '';
+  r.lang = 'pl-PL'; r.interimResults = true; r.maxAlternatives = 5; r.continuous = false;
+  $('mic').classList.add('on');
+  if(!retry) $('heard').textContent = 'Słucham…';   // przy ponowieniu zostaje komunikat z onend
+  r.onresult = ev => {
     const res = ev.results[ev.results.length-1];
     const alts = Array.from(res).map(a => a.transcript);
-    $('heard').textContent = '„' + alts[0] + '”';
+    if(alts[0].trim()){ heard = alts[0]; $('heard').textContent = '„' + heard + '”'; }
     if(!res.isFinal) return;
     const words = strip(alts[0]);
-    if(/\b(anuluj|pomin|stop)\b/.test(words)){ closeEntry(); toast('Anulowano'); return; }
+    if(/\b(anuluj|pomin|stop)\b/.test(words)){ done = true; closeEntry(); toast('Anulowano'); return; }
     let n = null;
     for(const a of alts){ n = parsePolishNumber(a); if(n !== null) break; }
-    if(n === null){ $('heard').textContent += ' — nie rozpoznano liczby, powtórz albo wpisz'; return; }
+    if(n === null) return;   // onend wznowi słuchanie
+    done = true;
     $('qty').value = n;
     $('heard').textContent = `„${alts[0]}” → ${n}`;
     if(opts.autoSave) setTimeout(commit, 450);
   };
-  rec.onerror = e => {
-    if(e.error === 'not-allowed') $('heard').textContent = 'Brak dostępu do mikrofonu';
-    else if(e.error === 'no-speech') $('heard').textContent = 'Nic nie usłyszałem — stuknij 🎤';
-    else $('heard').textContent = 'Błąd rozpoznawania: ' + e.error;
+  r.onerror = e => {
+    if(['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)){
+      fatal = true; $('heard').textContent = 'Brak dostępu do mikrofonu';
+    }
   };
-  rec.onend = () => { $('mic').classList.remove('on'); rec = null; };
-  try{ rec.start(); }catch{}
+  r.onend = () => {
+    if(rec !== r) return;   // przerwane celowo albo zastąpione nowym słuchaniem
+    rec = null; $('mic').classList.remove('on');
+    if(done || fatal || !current) return;
+    const what = heard ? `„${heard}” to nie liczba` : 'Nie usłyszałem liczby';
+    if(tries < MAX_TRIES){
+      $('heard').textContent = `${what} — słucham ponownie (${tries + 1}/${MAX_TRIES})…`;
+      setTimeout(() => { if(current && !rec) listen(true); }, 250);
+    } else $('heard').textContent = what + ' — stuknij 🎤 albo wpisz';
+  };
+  try{ r.start(); }catch{}
 }
-function stopListen(){ if(rec){ try{ rec.abort(); }catch{} rec = null; } $('mic').classList.remove('on'); }
+function stopListen(){ const r = rec; rec = null; if(r){ try{ r.abort(); }catch{} } $('mic').classList.remove('on'); }
 
 /* ---------- Edycja / czyszczenie ---------- */
 let editing = null;
