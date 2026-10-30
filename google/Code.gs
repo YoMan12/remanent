@@ -1,5 +1,5 @@
-// Prowadzi kolejkę remanentów z aplikacji Remanent w arkuszu, z której co minutę pobiera je kontener art-repricer
-// (raport mailem wysyła kontener). Starsza wersja aplikacji wysyła jeszcze pliki CSV/XLSX — te idą mailem stąd.
+// Prowadzi kolejkę remanentów i przyjęć towaru z aplikacji Remanent w arkuszu, z której co minutę pobiera je
+// kontener art-repricer (raport mailem wysyła kontener). Starsza wersja aplikacji wysyła jeszcze pliki CSV/XLSX — te idą mailem stąd.
 // Instrukcja w README.md obok.
 
 // Klucze NIE są w kodzie — Ustawienia projektu → Właściwości skryptu:
@@ -15,9 +15,11 @@ const TYPES = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 };
 // rewizja: licznik podmian z telefonu — kontener odsyła ją w „zakoncz”, żeby nie zamknąć nowszej wersji starymi danymi
-const KOLUMNY = ['id', 'zakonczono', 'tryb', 'pozycje', 'to', 'status', 'przyjeto', 'zmieniono', 'podsumowanie', 'blad', 'alarm', 'rewizja'];
+// tryb: pelny | czesciowy (remanent) albo przyjecie; dokument tylko przy przyjęciu
+const KOLUMNY = ['id', 'zakonczono', 'tryb', 'pozycje', 'to', 'status', 'przyjeto', 'zmieniono', 'podsumowanie', 'blad', 'alarm', 'rewizja', 'dokument'];
 const K = Object.fromEntries(KOLUMNY.map((k, i) => [k, i]));
 const STATUSY_KONCOWE = ['test', 'zapisany', 'blad', 'recznie'];
+const TRYBY_REMANENTU = ['pelny', 'czesciowy'];
 // Lista produktów dla telefonu (EAN → nazwa + podpowiedź, co zrobi kontener); zakładka „katalog” w arkuszu kolejki
 const AKCJE_TELEFONU = ['katalog_info', 'katalog_pobierz'];
 const KATALOG_KOLUMNY = ['ean', 'status', 'sku', 'nazwa', 'powod'];
@@ -43,6 +45,7 @@ function doGet() {
 // Pliki mailem tylko dla starszej wersji aplikacji, która wysyła je razem z adresem.
 function telefon(d) {
   if (!kluczOk(d.key, 'KLUCZ_TELEFON')) return out(false, 'Zły klucz wysyłki');
+  if (d.przyjecie) return zapiszPrzyjecie(d.przyjecie);
   const maPliki = (d.files || []).length > 0;
   if (!d.remanent && !maPliki) return out(false, 'Brak danych remanentu');
   const to = String(d.to || '').trim();
@@ -73,15 +76,10 @@ function zapiszRemanent(r, to) {
   if (r.wersja !== 1) throw new Error('Nieobsługiwana wersja danych remanentu');
   const id = String(r.id || '');
   if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) throw new Error('Błędny identyfikator remanentu');
-  if (r.tryb !== 'pelny' && r.tryb !== 'czesciowy') throw new Error('Błędny tryb remanentu');
-  const poz = (r.pozycje || []).map(p => {
-    const ean = String(p.ean || '');
-    const ilosc = Number(p.ilosc);
-    if (!/^\d{8,14}$/.test(ean) || !Number.isInteger(ilosc) || ilosc < 0) throw new Error('Błędna pozycja: ' + ean);
-    return ean + ':' + ilosc;
-  });
+  if (!TRYBY_REMANENTU.includes(r.tryb)) throw new Error('Błędny tryb remanentu');
+  const poz = pozycje(r.pozycje, 0);
   if (!poz.length) throw new Error('Remanent bez pozycji');
-  const wiersz = [id, String(r.zakonczono || ''), r.tryb, poz.join(';'), to, 'nowy', teraz(), teraz(), '', '', '', '1'];
+  const wiersz = [id, String(r.zakonczono || ''), r.tryb, poz.join(';'), to, 'nowy', teraz(), teraz(), '', '', '', '1', ''];
 
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -99,10 +97,105 @@ function zapiszRemanent(r, to) {
   }
 }
 
+// Pozycje jako „ean:ilosc” rozdzielone średnikiem; min — najmniejsza dozwolona ilość
+function pozycje(lista, min) {
+  return (lista || []).map(p => {
+    const ean = String(p.ean || '');
+    const ilosc = Number(p.ilosc);
+    if (!/^\d{8,14}$/.test(ean) || !Number.isInteger(ilosc) || ilosc < min) throw new Error('Błędna pozycja: ' + ean);
+    return ean + ':' + ilosc;
+  });
+}
+
+/* ---------- Przyjęcie towaru: kontener dodaje ilości do stanu LIM- albo zakłada LIM-0- ---------- */
+// Dodawanie nie jest idempotentne, więc po pobraniu przez kontener (status w_toku) telefon nie może już podmienić pozycji
+// Numer przyjęcia nadaje skrypt: kolejny w miesiącu (numer/MM/RRRR), więc nie ma literówek ani duplikatów
+function zapiszPrzyjecie(r) {
+  if (r.wersja !== 1) return out(false, 'Nieobsługiwana wersja danych przyjęcia');
+  const id = String(r.id || '');
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) return out(false, 'Błędny identyfikator przyjęcia');
+  const poz = pozycje(r.pozycje, 1);
+  if (!poz.length) return out(false, 'Przyjęcie bez pozycji');
+  const wiersz = [id, String(r.zakonczono || ''), 'przyjecie', poz.join(';'), '', 'nowy', teraz(), teraz(), '', '', '', '1', ''];
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sh = arkusz();
+    const w = sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, KOLUMNY.length).getValues();
+    const n = w.findIndex(x => String(x[K.id]) === id);
+    const stary = n < 0 ? null : w[n];
+    if (stary) {
+      // Ponowienie z telefonu: numer zostaje ten sam
+      wiersz[K.dokument] = String(stary[K.dokument]);
+      // Po zgubionej odpowiedzi te same dane już są w kolejce — sukces bez zmian
+      if (stary[K.pozycje] === wiersz[K.pozycje]) return out(true, '', odpowiedzPrzyjecia(wiersz[K.dokument]));
+      if (stary[K.status] !== 'nowy') {
+        return out(false, 'To przyjęcie jest już przetwarzane (' + stary[K.status] + ') — zmiany wyślij jako nowe przyjęcie');
+      }
+      wiersz[K.rewizja] = String((Number(stary[K.rewizja]) || 1) + 1);
+      sh.getRange(n + 2, 1, 1, wiersz.length).setValues([wiersz]);
+    } else {
+      wiersz[K.dokument] = nastepnyNumer(w);
+      sh.appendRow(wiersz);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  return out(true, '', odpowiedzPrzyjecia(wiersz[K.dokument]));
+}
+
+// Kolejny numer w bieżącym miesiącu (czas polski). Licznik we właściwościach skryptu chroni przed
+// ponownym nadaniem numeru, gdyby ktoś usunął wiersze z arkusza; wołać pod blokadą.
+function nastepnyNumer(w) {
+  const mr = Utilities.formatDate(new Date(), 'Europe/Warsaw', 'MM/yyyy');
+  const klucz = 'PRZYJECIE_NR_' + mr;
+  let max = Number(P.getProperty(klucz)) || 0;
+  w.forEach(x => {
+    const m = String(x[K.dokument]).match(/^(\d+)\/(\d\d\/\d{4})$/);
+    if (x[K.tryb] === 'przyjecie' && m && m[2] === mr) max = Math.max(max, Number(m[1]));
+  });
+  P.setProperty(klucz, String(max + 1));
+  return (max + 1) + '/' + mr;
+}
+
+// Telefon pokazuje nadany numer i to, czy kontener faktycznie zmieni stany (tryb zgłasza kontener przy pobieraniu)
+function odpowiedzPrzyjecia(dokument) {
+  return {dokument: dokument, kontener_tryb: P.getProperty('PRZYJECIE_TRYB_KONTENERA') || ''};
+}
+
+// Zwraca nowe i rozpoczęte (restart kontenera między pobraniem a „zakoncz”); nowe oznacza jako w_toku
+function przyjeciaDoPobrania(d) {
+  if (d.tryb) P.setProperty('PRZYJECIE_TRYB_KONTENERA', String(d.tryb).slice(0, 20));
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sh = arkusz();
+    if (sh.getLastRow() < 2) return [];
+    const w = sh.getRange(2, 1, sh.getLastRow() - 1, KOLUMNY.length).getValues();
+    const wynik = [];
+    w.forEach((x, i) => {
+      if (x[K.tryb] !== 'przyjecie' || !['nowy', 'w_toku'].includes(x[K.status])) return;
+      if (x[K.status] === 'nowy') {
+        x[K.status] = 'w_toku';
+        sh.getRange(i + 2, K.status + 1).setValue('w_toku');
+        sh.getRange(i + 2, K.zmieniono + 1).setValue(teraz());
+      }
+      wynik.push(x);
+    });
+    return wynik
+      .sort((a, b) => String(a[K.przyjeto]).localeCompare(String(b[K.przyjeto])))
+      .map(x => Object.assign(wpis(x), {dokument: String(x[K.dokument]), status: x[K.status]}));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 /* ---------- Kontener art-repricer ---------- */
 function kontener(d) {
   if (!kluczOk(d.key, 'KLUCZ_KONTENER')) return out(false, 'Zły klucz kontenera');
   if (d.akcja === 'pobierz') return out(true, '', {remanenty: nowe()});
+  if (d.akcja === 'pobierz_przyjecia') return out(true, '', {przyjecia: przyjeciaDoPobrania(d)});
   if (d.akcja === 'zakoncz') return zakoncz(d);
   if (d.akcja === 'katalog_zapisz') return katalogZapisz(d);
   return out(false, 'Nieznana akcja');
@@ -168,25 +261,30 @@ function telefonKatalog(d) {
   return out(true, '', Object.assign(info, {pozycje: pozycje}));
 }
 
+// Same remanenty — przyjęcia idą osobną akcją, żeby kontener nie wziął ich za remanent częściowy
 function nowe() {
   const sh = arkusz();
   if (sh.getLastRow() < 2) return [];
   return sh.getRange(2, 1, sh.getLastRow() - 1, KOLUMNY.length).getValues()
-    .filter(w => w[K.status] === 'nowy')
+    .filter(w => w[K.status] === 'nowy' && TRYBY_REMANENTU.includes(w[K.tryb]))
     .sort((a, b) => String(a[K.przyjeto]).localeCompare(String(b[K.przyjeto])))
-    .map(w => ({
-      wersja: 1,
-      id: String(w[K.id]),
-      tryb: w[K.tryb],
-      zakonczono: String(w[K.zakonczono]),
-      przyjeto: String(w[K.przyjeto]),   // zegar GAS — kontener porównuje z zegarem telefonu
-      rewizja: Number(w[K.rewizja]),
-      to: w[K.to],
-      pozycje: String(w[K.pozycje]).split(';').map(p => {
-        const [ean, ilosc] = p.split(':');
-        return {ean: ean, ilosc: Number(ilosc)};
-      })
-    }));
+    .map(wpis);
+}
+
+function wpis(w) {
+  return {
+    wersja: 1,
+    id: String(w[K.id]),
+    tryb: w[K.tryb],
+    zakonczono: String(w[K.zakonczono]),
+    przyjeto: String(w[K.przyjeto]),   // zegar GAS — kontener porównuje z zegarem telefonu
+    rewizja: Number(w[K.rewizja]),
+    to: w[K.to],
+    pozycje: String(w[K.pozycje]).split(';').map(p => {
+      const [ean, ilosc] = p.split(':');
+      return {ean: ean, ilosc: Number(ilosc)};
+    })
+  };
 }
 
 function zakoncz(d) {
@@ -196,7 +294,7 @@ function zakoncz(d) {
   try {
     const sh = arkusz();
     const n = znajdz(sh, String(d.id || ''));
-    if (!n) return out(false, 'Nie ma remanentu o tym id');
+    if (!n) return out(false, 'Nie ma remanentu ani przyjęcia o tym id');
     // Telefon podmienił pozycje w trakcie przetwarzania — status zostaje „nowy”, kontener weźmie nową wersję
     if (String(sh.getRange(n, K.rewizja + 1).getValue()) !== String(d.rewizja)) return out(false, 'Zmieniona rewizja');
     sh.getRange(n, K.status + 1).setValue(d.status);
@@ -209,7 +307,7 @@ function zakoncz(d) {
   }
 }
 
-/* ---------- Alarm: kontener nie odebrał remanentu ---------- */
+/* ---------- Alarm: kontener nie odebrał albo nie dokończył remanentu / przyjęcia ---------- */
 // Wyzwalacz czasowy co 15 min, zakładany funkcją ustaw()
 function alarm() {
   if (wOknie(new Date())) return;   // kontener celowo czeka do końca okna zamówień InnPro
@@ -218,9 +316,10 @@ function alarm() {
   const w = sh.getRange(2, 1, sh.getLastRow() - 1, KOLUMNY.length).getValues();
   const limit = Date.now() - ALARM_PO_MIN * 60000;
   w.forEach((r, i) => {
-    if (r[K.status] !== 'nowy' || r[K.alarm] || new Date(r[K.przyjeto]).getTime() > limit) return;
-    MailApp.sendEmail(ALARM_DO, 'Remanent nie został odebrany przez kontener',
-      `Remanent ${r[K.id]} (przyjęty ${r[K.przyjeto]}) czeka w kolejce dłużej niż ${ALARM_PO_MIN} min.\n` +
+    if (!['nowy', 'w_toku'].includes(r[K.status]) || r[K.alarm] || new Date(r[K.przyjeto]).getTime() > limit) return;
+    const co = r[K.tryb] === 'przyjecie' ? `Przyjęcie ${r[K.dokument]}` : 'Remanent';
+    MailApp.sendEmail(ALARM_DO, `${co}: kontener nie przetworzył w ${ALARM_PO_MIN} min`,
+      `${co} (id ${r[K.id]}, przyjęty ${r[K.przyjeto]}, status ${r[K.status]}) czeka w kolejce dłużej niż ${ALARM_PO_MIN} min.\n` +
       `Sprawdź, czy kontener art-repricer działa. Arkusz kolejki: ${sh.getParent().getUrl()}`);
     sh.getRange(i + 2, K.alarm + 1).setValue(teraz());
   });
@@ -245,11 +344,19 @@ function ustaw() {
 /* ---------- Pomocnicze ---------- */
 function arkusz() {
   let id = P.getProperty('ARKUSZ_ID');
-  if (id) return SpreadsheetApp.openById(id).getSheets()[0];
+  if (id) {
+    const sh = SpreadsheetApp.openById(id).getSheets()[0];
+    // Arkusz sprzed dodania kolumny „dokument”: dopisz nagłówek
+    if (sh.getLastColumn() < KOLUMNY.length) {
+      sh.getRange(1, 1, sh.getMaxRows(), KOLUMNY.length).setNumberFormat('@');
+      sh.getRange(1, 1, 1, KOLUMNY.length).setValues([KOLUMNY]);
+    }
+    return sh;
+  }
   const ss = SpreadsheetApp.create('Remanent — kolejka');
   const sh = ss.getSheets()[0];
   sh.setName('kolejka');
-  sh.getRange('A:L').setNumberFormat('@');   // wszystko tekstem: EAN-y i daty bez autokonwersji
+  sh.getRange(1, 1, sh.getMaxRows(), KOLUMNY.length).setNumberFormat('@');   // wszystko tekstem: EAN-y i daty bez autokonwersji
   sh.appendRow(KOLUMNY);
   sh.setFrozenRows(1);
   P.setProperty('ARKUSZ_ID', ss.getId());
@@ -274,6 +381,6 @@ function teraz() {
 
 function out(ok, error, dane) {
   return ContentService
-    .createTextOutput(JSON.stringify(ok ? Object.assign({ok: true}, dane) : {ok: false, error: error}))
+    .createTextOutput(JSON.stringify(Object.assign(ok ? {ok: true} : {ok: false, error: error}, dane)))
     .setMimeType(ContentService.MimeType.JSON);
 }

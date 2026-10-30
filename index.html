@@ -98,16 +98,28 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 .hint{font-size:13px;color:var(--muted)}
 .txt{display:block;width:100%;font:500 16px var(--sans);padding:10px;margin-top:6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
 .err{color:var(--bad);font-size:13px;min-height:1.2em;margin-top:6px}
+/* Przyjęcie towaru: inny kolor akcentu, żeby nie pomylić z remanentem (remanent ustawia stan, przyjęcie dodaje) */
+body.mode-p{--accent:#2b7bb9;--accent-fg:#fff}
+@media (prefers-color-scheme:dark){body.mode-p{--accent:#5aa9e6;--accent-fg:#14181d}}
+#modes{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#modes button{flex:1;border:0;border-radius:0;min-height:40px;background:transparent;color:var(--muted)}
+#modes button[aria-pressed=true]{background:var(--accent);color:var(--accent-fg)}
+#modeHint{margin:6px 0 10px}
 </style>
 </head>
 <body>
 <header>
-  <h1>Remanent<span class="ver" id="ver"></span></h1>
+  <h1><span id="title">Remanent</span><span class="ver" id="ver"></span></h1>
   <div style="display:flex;align-items:center;gap:8px">
     <span class="stat" id="stat">0 poz. · 0 szt.</span>
     <button class="ghost icon" id="btnSet" aria-label="Ustawienia wysyłki">⚙</button>
   </div>
 </header>
+<div id="modes" role="group" aria-label="Tryb pracy">
+  <button id="mRem" aria-pressed="true">Remanent</button>
+  <button id="mPrz" aria-pressed="false">Przyjęcie towaru</button>
+</div>
+<div class="hint" id="modeHint"></div>
 
 <div id="camwrap">
   <div id="reader"></div>
@@ -149,7 +161,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </section>
 
 <section class="panel">
-  <div class="lbl" style="margin-bottom:4px">Policzone pozycje</div>
+  <div class="lbl" style="margin-bottom:4px" id="listLbl">Policzone pozycje</div>
   <ul id="list"></ul>
   <div class="empty" id="empty">Lista jest pusta. Zeskanuj pierwszy produkt.</div>
 </section>
@@ -174,7 +186,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <div id="lastRow" hidden>
     <div class="hint" id="lastInfo" style="margin-top:12px"></div>
     <div class="btnrow" style="margin-top:6px">
-      <button id="btnLast">Zapisz pliki ostatniego remanentu</button>
+      <button id="btnLast">Zapisz pliki</button>
     </div>
   </div>
   <div class="btnrow">
@@ -206,11 +218,11 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </dialog>
 
 <dialog id="dlgClear">
-  <h2>Zresetować remanent?</h2>
+  <h2 id="clrTitle">Zresetować remanent?</h2>
   <p class="hint">Zniknie <b id="clrN"></b> pozycji. Nic nie zostanie wysłane.</p>
   <div class="btnrow">
     <button id="cNo">Anuluj</button>
-    <button class="danger" id="cYes">Resetuj</button>
+    <button class="danger" id="cYes">Wyczyść</button>
   </div>
 </dialog>
 
@@ -235,15 +247,17 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </dialog>
 
 <dialog id="dlgFinish">
-  <h2>Zakończyć remanent?</h2>
-  <p class="hint"><b id="finN"></b>. Remanent trafi do przetworzenia, a lista w telefonie zostanie wyczyszczona. Raport przyjdzie mailem (zwykle do 2 min); kopia zostaje w Ustawieniach → Ostatni remanent.</p>
-  <div class="lbl">Rodzaj remanentu</div>
-  <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
-    <input type="radio" name="finTryb" value="czesciowy" checked> Częściowy — tylko zeskanowane produkty
-  </label>
-  <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
-    <input type="radio" name="finTryb" value="pelny"> Pełny — niezeskanowane produkty LIM- dostaną stan 0
-  </label>
+  <h2 id="finTitle">Zakończyć remanent?</h2>
+  <p class="hint"><b id="finN"></b>. <span id="finTxt"></span></p>
+  <div id="finTrybBox">
+    <div class="lbl">Rodzaj remanentu</div>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+      <input type="radio" name="finTryb" value="czesciowy" checked> Częściowy — tylko zeskanowane produkty
+    </label>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+      <input type="radio" name="finTryb" value="pelny"> Pełny — niezeskanowane produkty LIM- dostaną stan 0
+    </label>
+  </div>
   <div class="err" id="finErr"></div>
   <div class="btnrow">
     <button id="fNo">Anuluj</button>
@@ -294,7 +308,26 @@ const LS = k => 'remanent.'+k;
 const load = (k, d) => { try{ const v = localStorage.getItem(LS(k)); return v ? JSON.parse(v) : d; }catch{ return d; } };
 const save = (k, v) => { try{ localStorage.setItem(LS(k), JSON.stringify(v)); return true; }catch{ return false; } };
 
-let items = load('items', {});        // code -> {qty, scans, t}
+// Dwa tryby z osobnymi listami: rozpoczęty remanent nie miesza się z przyjęciem i odwrotnie
+const MODES = {
+  remanent:{
+    items:'items', id:'remanentId', last:'ostatni', title:'Remanent',
+    listLbl:'Policzone pozycje', clear:'Resetuj remanent', finish:'Zakończ remanent', prev:'Już policzone',
+    hint:'Remanent rób po odłożeniu dostaw na półkę. Ustawia stan w Apilo na policzoną ilość.'
+  },
+  przyjecie:{
+    items:'itemsP', id:'przyjecieId', last:'ostatniP', title:'Przyjęcie',
+    listLbl:'Przyjmowane pozycje', clear:'Wyczyść przyjęcie', finish:'Zakończ przyjęcie', prev:'Już przyjęte',
+    hint:'Skanuj dostawę, zanim trafi na półkę. Ilości zostaną dodane do stanu w Apilo.'
+  }
+};
+let mode = load('mode', 'remanent');
+if(!MODES[mode]) mode = 'remanent';
+const M = () => MODES[mode];
+const isP = () => mode === 'przyjecie';
+const DUZO = 100;   // przyjęcie: powyżej tylu sztuk jednej pozycji pytamy, czy to nie literówka
+
+let items = load(M().items, {});      // code -> {qty, scans, t}
 let catalog = load('catalog', {});    // code -> name
 let catMeta = load('catMeta', {});    // code -> [status lim|nowy|recznie, sku, powód] — lista z kontenera
 let catSrc = load('catSrc', null);    // skąd lista: {typ:'apilo', wygenerowano, feed_z, liczby, liczba} albo {typ:'plik'}
@@ -303,12 +336,32 @@ if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie
 let current = null;
 
 // Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
-const APP_VERSION = 'Yo-26.10.26-b8';
+const APP_VERSION = 'Yo-26.10.30-b2';
 
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
 
-function persist(){ save('items', items); render(); }
+function persist(){ save(M().items, items); render(); }
+
+function applyMode(){
+  const m = M();
+  document.body.classList.toggle('mode-p', isP());
+  $('title').textContent = m.title;
+  $('mRem').setAttribute('aria-pressed', !isP());
+  $('mPrz').setAttribute('aria-pressed', isP());
+  $('modeHint').textContent = m.hint;
+  $('listLbl').textContent = m.listLbl;
+  $('btnClear').textContent = m.clear;
+  $('btnFinish').textContent = m.finish;
+}
+function setMode(m){
+  if(m === mode) return;
+  if(current) closeEntry();
+  mode = m; save('mode', mode);
+  items = load(M().items, {});
+  applyMode(); render(); lastInfo();
+  toast(isP() ? 'Przyjęcie towaru: ilości zostaną DODANE do stanu' : 'Remanent: stan zostanie USTAWIONY na policzoną ilość', 3500);
+}
 
 function render(){
   const codes = Object.keys(items).sort((a,b)=>items[b].t - items[a].t);
@@ -331,9 +384,9 @@ function render(){
   $('stat').textContent = `${codes.length} poz. · ${sum} szt.`;
 }
 
-function toast(msg){
+function toast(msg, ms = 2200){
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toast.h); toast.h = setTimeout(()=>t.classList.remove('show'), 2200);
+  clearTimeout(toast.h); toast.h = setTimeout(()=>t.classList.remove('show'), ms);
 }
 
 function beep(freq=1400, ms=90){
@@ -520,7 +573,7 @@ function openEntry(code){
   $('eMeta').textContent = meta; $('eMeta').hidden = !meta;
   $('eMeta').classList.toggle('warn', meta.startsWith('⚠'));
   const prev = items[code];
-  $('ePrev').textContent = prev ? `Już policzone: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
+  $('ePrev').textContent = prev ? `${M().prev}: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
   $('qty').value = ''; $('heard').textContent = ''; $('micState').textContent = '';
   $('entry').scrollIntoView({behavior:'smooth', block:'nearest'});
   // Chwila przerwy po piknięciu, żeby rozpoznawanie nie złapało sygnału zamiast początku słowa
@@ -536,8 +589,9 @@ function closeEntry(){
 
 function commit(){
   const q = parseInt($('qty').value, 10);
-  if(!Number.isFinite(q) || q < 0){ toast('Podaj ilość'); $('qty').focus(); return; }
+  if(!Number.isFinite(q) || q < (isP() ? 1 : 0)){ toast(isP() ? 'Podaj ilość (co najmniej 1)' : 'Podaj ilość'); $('qty').focus(); return; }
   const code = current, prev = items[code];
+  if(!bigOk(prev && opts.sum ? prev.qty + q : q)){ $('qty').focus(); return; }
   if(prev){
     prev.qty = opts.sum ? prev.qty + q : q; prev.scans++; prev.t = Date.now();
   } else items[code] = {qty:q, scans:1, t:Date.now()};
@@ -547,6 +601,11 @@ function commit(){
   closeEntry();
   const li = document.querySelector(`li[data-code="${CSS.escape(code)}"]`);
   if(li){ li.classList.add('flash'); setTimeout(()=>li.classList.remove('flash'), 900); }
+}
+
+// Literówka 1000 zamiast 10 przy dodawaniu do stanu wyszłaby dopiero przy następnym remanencie
+function bigOk(q){
+  return !isP() || q <= DUZO || confirm(`${q} szt. jednej pozycji — na pewno? Ta ilość zostanie dodana do stanu.`);
 }
 
 /* ---------- Rozpoznawanie mowy ---------- */
@@ -622,15 +681,22 @@ function openEdit(code){
 }
 $('dOk').onclick = () => {
   const q = parseInt($('dQty').value,10);
-  if(Number.isFinite(q) && q >= 0){ items[editing].qty = q; persist(); }
+  if(isP() && q === 0){ toast('Pozycję usuń przyciskiem Usuń'); return; }
+  if(Number.isFinite(q) && q >= 0){
+    if(!bigOk(q)) return;
+    items[editing].qty = q; persist();
+  }
   $('dlgEdit').close();
 };
 $('dDel').onclick = () => { delete items[editing]; persist(); $('dlgEdit').close(); toast('Usunięto pozycję'); };
 $('dCancel').onclick = () => $('dlgEdit').close();
 
-$('btnClear').onclick = () => { $('clrN').textContent = Object.keys(items).length; $('dlgClear').showModal(); };
+$('btnClear').onclick = () => {
+  $('clrTitle').textContent = isP() ? 'Wyczyścić przyjęcie?' : 'Zresetować remanent?';
+  $('clrN').textContent = Object.keys(items).length; $('dlgClear').showModal();
+};
 $('cNo').onclick = () => $('dlgClear').close();
-$('cYes').onclick = () => { items = {}; persist(); save('remanentId', ''); $('dlgClear').close(); toast('Remanent zresetowany'); };
+$('cYes').onclick = () => { items = {}; persist(); save(M().id, ''); $('dlgClear').close(); toast(isP() ? 'Przyjęcie wyczyszczone' : 'Remanent zresetowany'); };
 
 /* ---------- Eksport ---------- */
 // Ten sam układ co przy wczytywaniu listy: Kod | Ilość | Nazwa (Nazwa tylko, gdy wczytano listę)
@@ -662,23 +728,26 @@ function reportFiles(data = rows(), base = 'remanent_' + stamp()){
   return [csvFile(base + '.csv', data), xlsxFile(base + '.xlsx', data)].filter(Boolean);
 }
 
-/* ---------- Kopia bezpieczeństwa: ostatni wysłany remanent zostaje w telefonie ---------- */
-function saveLast(tryb){
+/* ---------- Kopia bezpieczeństwa: ostatni wysłany remanent / przyjęcie zostaje w telefonie ---------- */
+const lastBase = l => (l.dokument ? 'przyjecie_' + l.dokument.replace(/\//g, '-') + '_' : 'remanent_') + l.stamp;
+function saveLast(tryb, dokument){
   const names = Object.keys(catalog).length ? Object.fromEntries(Object.keys(items).map(c => [c, catalog[c] || ''])) : null;
-  save('ostatni', {stamp:stamp(), tryb, items, names});
+  save(M().last, {stamp:stamp(), tryb, dokument, items, names});
   lastInfo();
 }
 function lastInfo(){
-  const l = load('ostatni', null);
+  const l = load(M().last, null);
   $('lastRow').hidden = !l;
   if(!l) return;
   const codes = Object.keys(l.items), sum = codes.reduce((s,c) => s + l.items[c].qty, 0);
-  $('lastInfo').textContent = `Ostatni remanent: ${l.stamp.replace(/_(\d\d)(\d\d)$/, ' $1:$2')} · ` +
-    `${l.tryb === 'pelny' ? 'pełny' : 'częściowy'} · ${codes.length} poz. · ${sum} szt.`;
+  const kiedy = l.stamp.replace(/_(\d\d)(\d\d)$/, ' $1:$2');
+  $('lastInfo').textContent = (l.dokument ? `Ostatnie przyjęcie: ${l.dokument} · ${kiedy}` :
+    `Ostatni remanent: ${kiedy} · ${l.tryb === 'pelny' ? 'pełny' : 'częściowy'}`) + ` · ${codes.length} poz. · ${sum} szt.`;
+  $('btnLast').textContent = l.dokument ? 'Zapisz pliki ostatniego przyjęcia' : 'Zapisz pliki ostatniego remanentu';
 }
 $('btnLast').onclick = () => {
-  const l = load('ostatni', null);
-  if(l) deliver(reportFiles(rows(l.items, l.names), 'remanent_' + l.stamp));
+  const l = load(M().last, null);
+  if(l) deliver(reportFiles(rows(l.items, l.names), lastBase(l)));
 };
 async function deliver(files){
   if(navigator.canShare?.({files})){
@@ -699,10 +768,10 @@ function locked(){
   const d = new Date(), day = d.getDay(), m = d.getHours()*60 + d.getMinutes();
   return day >= 1 && day <= 5 && m >= 13*60+45 && m < 14*60+30;
 }
-// Id remanentu trzymamy do udanej wysyłki: ponowienie po błędzie nie tworzy drugiego wpisu w kolejce
-function remanentId(){
-  let id = load('remanentId', '');
-  if(!id){ id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); save('remanentId', id); }
+// Id trzymamy do udanej wysyłki: ponowienie po błędzie nie tworzy drugiego wpisu w kolejce
+function sendId(){
+  let id = load(M().id, '');
+  if(!id){ id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); save(M().id, id); }
   return id;
 }
 function totals(){
@@ -712,9 +781,14 @@ function totals(){
 $('btnFinish').onclick = () => {
   const {n, sum} = totals();
   if(!n) return toast('Brak pozycji — nie ma czego wysłać');
-  if(locked()) return toast(LOCK_MSG);
+  if(!isP() && locked()) return toast(LOCK_MSG);
   finFiles = null;
   document.querySelector('input[name=finTryb][value=czesciowy]').checked = true;
+  $('finTitle').textContent = isP() ? 'Zakończyć przyjęcie?' : 'Zakończyć remanent?';
+  $('finTxt').textContent = isP()
+    ? 'Ilości zostaną dodane do stanów LIM-, brakujące produkty założone z InnPro. Numer przyjęcia (kolejny w miesiącu) nada skrypt. Lista w telefonie zostanie wyczyszczona. Raport przyjdzie mailem (zwykle do 2 min); kopia zostaje w Ustawieniach.'
+    : 'Remanent trafi do przetworzenia, a lista w telefonie zostanie wyczyszczona. Raport przyjdzie mailem (zwykle do 2 min); kopia zostaje w Ustawieniach → Ostatni remanent.';
+  $('finTrybBox').hidden = isP();
   $('finN').textContent = `${n} poz. · ${sum} szt.`;
   $('finErr').textContent = ''; $('fSaveRow').hidden = true;
   $('fYes').disabled = false; $('fYes').textContent = 'Wyślij i zakończ';
@@ -723,31 +797,34 @@ $('btnFinish').onclick = () => {
 $('fNo').onclick = () => $('dlgFinish').close();
 $('fSave').onclick = () => deliver(finFiles || reportFiles());
 $('fYes').onclick = async () => {
-  if(locked()){ $('finErr').textContent = LOCK_MSG; return; }
+  const p = isP();
+  if(!p && locked()){ $('finErr').textContent = LOCK_MSG; return; }
   if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki (⚙ u góry ekranu)'; $('fSaveRow').hidden = false; return; }
-  finFiles = reportFiles();
-  const tryb = document.querySelector('input[name=finTryb]:checked').value;
+  finFiles = reportFiles(rows(), (p ? 'przyjecie_' : 'remanent_') + stamp());
+  const tryb = p ? 'przyjecie' : document.querySelector('input[name=finTryb]:checked').value;
   $('fYes').disabled = true; $('fYes').textContent = 'Wysyłam…'; $('finErr').textContent = '';
+  let j;
   try{
-    // Same dane remanentu (JSON jako text/plain, bez preflightu CORS) — skrypt Google zapisuje je w kolejce
-    // dla kontenera; maila z plikami już nie ma (serwer/mail.php to stary wariant wysyłki plików)
-    const remanent = {
-      wersja:1, id:remanentId(), zakonczono:new Date().toISOString(), tryb,
+    // Same dane (JSON jako text/plain, bez preflightu CORS) — skrypt Google zapisuje je w kolejce dla kontenera
+    const dane = {
+      wersja:1, id:sendId(), zakonczono:new Date().toISOString(),
       pozycje:Object.keys(items).map(c => ({ean:c, ilosc:items[c].qty}))
     };
-    const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify({key:opts.mailKey || '', remanent})});
-    const j = await r.json().catch(() => ({}));
-    if(!r.ok || !j.ok) throw new Error(j.error || (r.ok ? 'nieoczekiwana odpowiedź skryptu' : 'HTTP ' + r.status));
+    j = await gas(p ? {przyjecie:dane} : {remanent:{...dane, tryb}});
   }catch(e){
     $('finErr').textContent = 'Nie wysłano: ' + (e?.message || e) + '. Lista została bez zmian.';
     $('fSaveRow').hidden = false;
     $('fYes').disabled = false; $('fYes').textContent = 'Spróbuj ponownie';
     return;
   }
-  saveLast(tryb);
-  items = {}; persist(); save('remanentId', '');
+  const dokument = p ? String(j.dokument || '?') : undefined;   // numer nadany przez skrypt
+  saveLast(tryb, dokument);
+  items = {}; persist(); save(M().id, '');
   $('dlgFinish').close();
-  toast('Remanent wysłany — raport przyjdzie mailem');
+  if(!p) toast('Remanent wysłany — raport przyjdzie mailem');
+  // Kontener w trybie testowym tylko wylicza stany — towar fizycznie przyjęty, a Apilo bez zmian
+  else if(j.kontener_tryb === 'test') toast(`Przyjęcie ${dokument} wysłane. TEST — stan w Apilo NIE zostanie zmieniony, raport przyjdzie mailem`, 6000);
+  else toast(`Przyjęcie ${dokument} wysłane — raport przyjdzie mailem`, 3500);
 };
 
 /* ---------- Katalog produktów: lista z Apilo/InnPro (kontener → skrypt Google) albo plik ---------- */
@@ -772,14 +849,14 @@ function metaText(code){
   if(catSrc?.typ !== 'apilo') return '';
   const m = catMeta[code], z = ` · podpowiedź z ${fmtT(catSrc.wygenerowano)}`;
   if(!m) return '⚠ nieznany EAN — do ręcznej obsługi' + z;
-  if(m[0] === 'lim') return `na stanie · ${m[1]}` + z;
+  if(m[0] === 'lim') return `na stanie · ${m[1]}` + (isP() ? ' · ilość zostanie dodana' : '') + z;
   if(m[0] === 'nowy') return `nowy z InnPro · zostanie założony jako ${m[1]}` + z;
   return `⚠ do ręcznej obsługi: ${m[2] || 'szczegóły w raporcie'}` + z;
 }
 async function gas(body){
   const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(Object.assign({key:opts.mailKey || ''}, body))});
   const j = await r.json().catch(() => ({}));
-  if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  if(!r.ok || !j.ok) throw new Error(j.error || (r.ok ? 'nieoczekiwana odpowiedź skryptu' : 'HTTP ' + r.status));
   return j;
 }
 // Pełną listę (~1 MB) pobieramy tylko, gdy w skrypcie jest nowsza niż w telefonie
@@ -884,7 +961,9 @@ $('sOk').onclick = () => {
 document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
 });
-catInfo(); lastInfo(); render();
+$('mRem').onclick = () => setMode('remanent');
+$('mPrz').onclick = () => setMode('przyjecie');
+applyMode(); catInfo(); lastInfo(); render();
 syncCatalog();
 
 // Kamera startuje sama po otwarciu aplikacji; przycisk zostaje tylko jako zapas, gdy start się nie uda

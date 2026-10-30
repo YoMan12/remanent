@@ -8,7 +8,11 @@ Tymczasowe zastępstwo dla `serwer/mail.php`, dopóki nie ma dostępu do hosting
   z konta Google właściciela skryptu (limit ok. 100 odbiorców dziennie).
 - **Kontener art-repricer → skrypt:** co minutę `{"akcja":"pobierz"}` zwraca remanenty
   ze statusem `nowy`, a `{"akcja":"zakoncz"}` ustawia status `test | zapisany | blad | recznie`.
-- **Alarm:** co 15 min. Jeśli remanent czeka dłużej niż 30 min, idzie mail
+- **Przyjęcie towaru:** telefon wysyła `przyjecie`, a skrypt nadaje mu numer (kolejny w miesiącu,
+  `N/MM/RRRR`). Kontener pobiera przyjęcia osobno przez `{"akcja":"pobierz_przyjecia","tryb":"test"}`.
+  Status zmienia się wtedy z `nowy` na `w_toku`, a telefon nie może już podmienić pozycji. Zwykłe `pobierz`
+  zwraca wyłącznie remanenty.
+- **Alarm:** co 15 min. Jeśli remanent albo przyjęcie czeka dłużej niż 30 min, idzie mail
   (poza oknem zamówień InnPro w dni robocze 13:45–14:45).
 
 ## Klucze: Ustawienia projektu → Właściwości skryptu
