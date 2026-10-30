@@ -86,12 +86,12 @@ function zapiszRemanent(r, to) {
   try {
     const sh = arkusz();
     const n = znajdz(sh, id);
-    if (!n) { sh.appendRow(wiersz); return; }
+    if (!n) { zapiszWiersz(sh, 0, wiersz); return; }
     // Ponowienie tego samego remanentu: podmieniamy dane, dopóki kontener go nie przetworzył
     const stary = sh.getRange(n, 1, 1, KOLUMNY.length).getValues()[0];
     if (stary[K.status] !== 'nowy') throw new Error('Ten remanent został już przetworzony (' + stary[K.status] + ') — zresetuj listę');
     wiersz[K.rewizja] = String((Number(stary[K.rewizja]) || 1) + 1);
-    sh.getRange(n, 1, 1, wiersz.length).setValues([wiersz]);
+    zapiszWiersz(sh, n, wiersz);
   } finally {
     lock.releaseLock();
   }
@@ -134,10 +134,10 @@ function zapiszPrzyjecie(r) {
         return out(false, 'To przyjęcie jest już przetwarzane (' + stary[K.status] + ') — zmiany wyślij jako nowe przyjęcie');
       }
       wiersz[K.rewizja] = String((Number(stary[K.rewizja]) || 1) + 1);
-      sh.getRange(n + 2, 1, 1, wiersz.length).setValues([wiersz]);
+      zapiszWiersz(sh, n + 2, wiersz);
     } else {
       wiersz[K.dokument] = nastepnyNumer(w);
-      sh.appendRow(wiersz);
+      zapiszWiersz(sh, 0, wiersz);
     }
   } finally {
     lock.releaseLock();
@@ -361,6 +361,16 @@ function arkusz() {
   sh.setFrozenRows(1);
   P.setProperty('ARKUSZ_ID', ss.getId());
   return sh;
+}
+
+// Zapis wiersza kolejki jako czysty tekst (n = 0: nowy wiersz na końcu). appendRow i setValues bez
+// formatu tekstowego zamieniają „1/10/2026” na datę, a „ean:ilość” mogą wziąć za czas.
+function zapiszWiersz(sh, n, wiersz) {
+  if (!n) {
+    n = sh.getLastRow() + 1;
+    if (n > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 100);
+  }
+  sh.getRange(n, 1, 1, wiersz.length).setNumberFormat('@').setValues([wiersz]);
 }
 
 function znajdz(sh, id) {
