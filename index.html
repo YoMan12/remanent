@@ -32,6 +32,8 @@ body{padding:env(safe-area-inset-top,0) max(12px,env(safe-area-inset-right,0px))
 header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:12px 8px}
 h1{font:600 18px var(--mono);letter-spacing:.04em;margin:0;text-transform:uppercase}
 .stat{font:500 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+/* Wersja w tej samej linii co ostatnie słowo tytułu (na wąskim ekranie: obok „TEST”) */
+.ver{font:500 11px var(--mono);color:var(--muted);white-space:nowrap;text-transform:none;letter-spacing:0;margin-left:8px;vertical-align:middle}
 button{font:600 15px var(--sans);border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:10px;padding:12px 14px;min-height:46px;cursor:pointer}
 button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
@@ -63,6 +65,7 @@ button.icon{min-height:40px;padding:6px 10px;font-size:20px;line-height:1}
 .lbl{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .code{font:600 22px var(--mono);word-break:break-all}
 .name{color:var(--muted);margin-top:2px}
+.name.warn{color:var(--bad)}
 .qtyrow{display:flex;gap:8px;align-items:stretch;margin-top:12px}
 #qty{flex:1;min-width:0;font:600 34px var(--mono);text-align:center;border:2px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);padding:4px}
 #mic{width:64px;font-size:22px}
@@ -95,16 +98,28 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 .hint{font-size:13px;color:var(--muted)}
 .txt{display:block;width:100%;font:500 16px var(--sans);padding:10px;margin-top:6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
 .err{color:var(--bad);font-size:13px;min-height:1.2em;margin-top:6px}
+/* Przyjęcie towaru: inny kolor akcentu, żeby nie pomylić z remanentem (remanent ustawia stan, przyjęcie dodaje) */
+body.mode-p{--accent:#2b7bb9;--accent-fg:#fff}
+@media (prefers-color-scheme:dark){body.mode-p{--accent:#5aa9e6;--accent-fg:#14181d}}
+#modes{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#modes button{flex:1;border:0;border-radius:0;min-height:40px;background:transparent;color:var(--muted)}
+#modes button[aria-pressed=true]{background:var(--accent);color:var(--accent-fg)}
+#modeHint{margin:6px 0 10px}
 </style>
 </head>
 <body>
 <header>
-  <h1>Remanent</h1>
+  <h1><span id="title">Remanent</span><span class="ver" id="ver"></span></h1>
   <div style="display:flex;align-items:center;gap:8px">
     <span class="stat" id="stat">0 poz. · 0 szt.</span>
     <button class="ghost icon" id="btnSet" aria-label="Ustawienia wysyłki">⚙</button>
   </div>
 </header>
+<div id="modes" role="group" aria-label="Tryb pracy">
+  <button id="mRem" aria-pressed="true">Remanent</button>
+  <button id="mPrz" aria-pressed="false">Przyjęcie towaru</button>
+</div>
+<div class="hint" id="modeHint"></div>
 
 <div id="camwrap">
   <div id="reader"></div>
@@ -131,12 +146,14 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <div class="lbl">Zeskanowano</div>
   <div class="code" id="eCode"></div>
   <div class="name" id="eName"></div>
+  <div class="name" id="eMeta"></div>
   <div class="prev" id="ePrev"></div>
   <div class="qtyrow">
     <input id="qty" type="number" inputmode="numeric" min="0" placeholder="ilość">
     <button id="mic" aria-label="Powiedz ilość">🎤</button>
   </div>
   <div id="heard"></div>
+  <div class="hint" id="micState"></div>
   <div class="btnrow">
     <button class="ghost" id="btnCancel">Anuluj</button>
     <button class="primary" id="btnSave">Zapisz</button>
@@ -144,7 +161,7 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </section>
 
 <section class="panel">
-  <div class="lbl" style="margin-bottom:4px">Policzone pozycje</div>
+  <div class="lbl" style="margin-bottom:4px" id="listLbl">Policzone pozycje</div>
   <ul id="list"></ul>
   <div class="empty" id="empty">Lista jest pusta. Zeskanuj pierwszy produkt.</div>
 </section>
@@ -160,11 +177,23 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
   <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
     <input type="checkbox" id="optSum" checked> Ten sam kod drugi raz: dodaj do ilości (wyłączone: zastąp)
   </label>
+  <label style="display:flex;gap:10px;align-items:center;margin-top:10px">
+    <input type="checkbox" id="optCamOff" checked> Wyłączaj kamerę podczas mówienia ilości (lepiej słychać; kamera wraca po ok. 1 s)
+  </label>
   <div class="btnrow">
     <button class="danger" id="btnClear">Resetuj remanent</button>
   </div>
+  <div id="lastRow" hidden>
+    <div class="hint" id="lastInfo" style="margin-top:12px"></div>
+    <div class="btnrow" style="margin-top:6px">
+      <button id="btnLast">Zapisz pliki</button>
+    </div>
+  </div>
   <div class="btnrow">
-    <button id="btnCatalog">Wczytaj listę produktów (CSV/XLSX)</button>
+    <button id="btnCatSync" hidden>Odśwież listę produktów z Apilo</button>
+  </div>
+  <div class="btnrow">
+    <button id="btnCatalog">Wczytaj listę z pliku (CSV/XLSX)</button>
   </div>
   <div class="btnrow">
     <button class="danger" id="btnCatClear" hidden>Wyczyść listę produktów</button>
@@ -189,11 +218,11 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </dialog>
 
 <dialog id="dlgClear">
-  <h2>Zresetować remanent?</h2>
+  <h2 id="clrTitle">Zresetować remanent?</h2>
   <p class="hint">Zniknie <b id="clrN"></b> pozycji. Nic nie zostanie wysłane.</p>
   <div class="btnrow">
     <button id="cNo">Anuluj</button>
-    <button class="danger" id="cYes">Resetuj</button>
+    <button class="danger" id="cYes">Wyczyść</button>
   </div>
 </dialog>
 
@@ -218,10 +247,17 @@ dialog input[type=number]{width:100%;font:600 28px var(--mono);text-align:center
 </dialog>
 
 <dialog id="dlgFinish">
-  <h2>Zakończyć remanent?</h2>
-  <p class="hint"><b id="finN"></b>. Pliki CSV i XLSX pójdą mailem, potem lista zostanie wyczyszczona.</p>
-  <label class="lbl" for="finMail">Wyślij na adres</label>
-  <input class="txt" id="finMail" type="email" inputmode="email" autocomplete="email">
+  <h2 id="finTitle">Zakończyć remanent?</h2>
+  <p class="hint"><b id="finN"></b>. <span id="finTxt"></span></p>
+  <div id="finTrybBox">
+    <div class="lbl">Rodzaj remanentu</div>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+      <input type="radio" name="finTryb" value="czesciowy" checked> Częściowy — tylko zeskanowane produkty
+    </label>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:6px">
+      <input type="radio" name="finTryb" value="pelny"> Pełny — niezeskanowane produkty LIM- dostaną stan 0
+    </label>
+  </div>
   <div class="err" id="finErr"></div>
   <div class="btnrow">
     <button id="fNo">Anuluj</button>
@@ -241,6 +277,7 @@ const NUM = {};
 const add = (v, ...w) => w.forEach(x => NUM[strip(x)] = v);
 add(0,'zero'); add(1,'jeden','jedna','jedno','jedną','jednego'); add(2,'dwa','dwie','dwóch');
 add(3,'trzy','trzech'); add(4,'cztery','czterech'); add(5,'pięć','pięciu'); add(6,'sześć','sześciu');
+add(3,'czy'); add(6,'cześć');   // częste przekłamania rozpoznawania przy samym liczebniku
 add(7,'siedem','siedmiu'); add(8,'osiem','ośmiu'); add(9,'dziewięć','dziewięciu');
 add(10,'dziesięć'); add(11,'jedenaście'); add(12,'dwanaście'); add(13,'trzynaście'); add(14,'czternaście');
 add(15,'piętnaście'); add(16,'szesnaście'); add(17,'siedemnaście'); add(18,'osiemnaście'); add(19,'dziewiętnaście');
@@ -269,16 +306,62 @@ function parsePolishNumber(text){
 /* ---------- Stan ---------- */
 const LS = k => 'remanent.'+k;
 const load = (k, d) => { try{ const v = localStorage.getItem(LS(k)); return v ? JSON.parse(v) : d; }catch{ return d; } };
-const save = (k, v) => { try{ localStorage.setItem(LS(k), JSON.stringify(v)); }catch{} };
+const save = (k, v) => { try{ localStorage.setItem(LS(k), JSON.stringify(v)); return true; }catch{ return false; } };
 
-let items = load('items', {});        // code -> {qty, scans, t}
+// Dwa tryby z osobnymi listami: rozpoczęty remanent nie miesza się z przyjęciem i odwrotnie
+const MODES = {
+  remanent:{
+    items:'items', id:'remanentId', last:'ostatni', title:'Remanent',
+    listLbl:'Policzone pozycje', clear:'Resetuj remanent', finish:'Zakończ remanent', prev:'Już policzone',
+    hint:'Remanent rób po odłożeniu dostaw na półkę. Ustawia stan w Apilo na policzoną ilość.'
+  },
+  przyjecie:{
+    items:'itemsP', id:'przyjecieId', last:'ostatniP', title:'Przyjęcie',
+    listLbl:'Przyjmowane pozycje', clear:'Wyczyść przyjęcie', finish:'Zakończ przyjęcie', prev:'Już przyjęte',
+    hint:'Skanuj dostawę, zanim trafi na półkę. Ilości zostaną dodane do stanu w Apilo.'
+  }
+};
+let mode = load('mode', 'remanent');
+if(!MODES[mode]) mode = 'remanent';
+const M = () => MODES[mode];
+const isP = () => mode === 'przyjecie';
+const DUZO = 100;   // przyjęcie: powyżej tylu sztuk jednej pozycji pytamy, czy to nie literówka
+
+let items = load(M().items, {});      // code -> {qty, scans, t}
 let catalog = load('catalog', {});    // code -> name
+let catMeta = load('catMeta', {});    // code -> [status lim|nowy|recznie, sku, powód] — lista z kontenera
+let catSrc = load('catSrc', null);    // skąd lista: {typ:'apilo', wygenerowano, feed_z, liczby, liczba} albo {typ:'plik'}
 let opts = load('opts', {autoMic:true, autoSave:true, sum:true});
+if(opts.camOff === undefined) opts.camOff = true;   // nowa opcja — domyślnie włączona także przy zapisanych ustawieniach
 let current = null;
 
-const $ = id => document.getElementById(id);
+// Bump przy każdej zmianie: gałąź test → Yo-RR.MM.DD-bN, scalenie z main → Yo-RR.MM.DD
+const APP_VERSION = 'Yo-26.10.30';
 
-function persist(){ save('items', items); render(); }
+const $ = id => document.getElementById(id);
+$('ver').textContent = APP_VERSION;
+
+function persist(){ save(M().items, items); render(); }
+
+function applyMode(){
+  const m = M();
+  document.body.classList.toggle('mode-p', isP());
+  $('title').textContent = m.title;
+  $('mRem').setAttribute('aria-pressed', !isP());
+  $('mPrz').setAttribute('aria-pressed', isP());
+  $('modeHint').textContent = m.hint;
+  $('listLbl').textContent = m.listLbl;
+  $('btnClear').textContent = m.clear;
+  $('btnFinish').textContent = m.finish;
+}
+function setMode(m){
+  if(m === mode) return;
+  if(current) closeEntry();
+  mode = m; save('mode', mode);
+  items = load(M().items, {});
+  applyMode(); render(); lastInfo();
+  toast(isP() ? 'Przyjęcie towaru: ilości zostaną DODANE do stanu' : 'Remanent: stan zostanie USTAWIONY na policzoną ilość', 3500);
+}
 
 function render(){
   const codes = Object.keys(items).sort((a,b)=>items[b].t - items[a].t);
@@ -301,18 +384,19 @@ function render(){
   $('stat').textContent = `${codes.length} poz. · ${sum} szt.`;
 }
 
-function toast(msg){
+function toast(msg, ms = 2200){
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toast.h); toast.h = setTimeout(()=>t.classList.remove('show'), 2200);
+  clearTimeout(toast.h); toast.h = setTimeout(()=>t.classList.remove('show'), ms);
 }
 
-let actx;
 function beep(freq=1400, ms=90){
   try{
-    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.frequency.value = freq; g.gain.value = .15; o.connect(g); g.connect(actx.destination);
-    o.start(); o.stop(actx.currentTime + ms/1000);
+    // Kanał dźwięku tylko na czas sygnału: otwarty na stałe włącza tłumienie echa i ścisza mikrofon
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = freq; g.gain.value = .15; o.connect(g); g.connect(ctx.destination);
+    o.onended = () => ctx.close().catch(()=>{});
+    o.start(); o.stop(ctx.currentTime + ms/1000);
   }catch{}
   if(navigator.vibrate) navigator.vibrate(60);
 }
@@ -320,13 +404,20 @@ function beep(freq=1400, ms=90){
 /* ---------- Kamera ---------- */
 let scanner = null, scanning = false, lastCode = '', lastAt = 0;
 
-let starting = false;
+let starting = false, camStopping = null;
 async function startCamera(){
   if(starting || scanning) return;
   starting = true;
-  try{ await startCameraInner(); } finally { starting = false; }
+  try{
+    if(camStopping) await camStopping;
+    // Po wyłączeniu Android potrzebuje chwili na zwolnienie aparatu — kilka prób z przerwą
+    for(let i = 0; i < 3 && !scanning; i++){
+      if(i) await new Promise(r => setTimeout(r, 700));
+      await startCameraInner(i === 2);
+    }
+  } finally { starting = false; }
 }
-async function startCameraInner(){
+async function startCameraInner(last = true){
   if(!window.Html5Qrcode){ toast('Nie wczytano biblioteki skanera — sprawdź internet'); return; }
   const F = Html5QrcodeSupportedFormats;
   scanner = new Html5Qrcode('reader', {
@@ -341,15 +432,22 @@ async function startCameraInner(){
       // Wyższa rozdzielczość = ostrzejsze kreski przy małych kodach
       await scanner.start(cam, {...cfg, videoConstraints:{...cam, width:{ideal:1920}, height:{ideal:1080}}}, onScan, ()=>{});
     }catch(e1){
-      if(opts.camId){ opts.camId = ''; save('opts', opts); }
+      // Wybrany aparat kasujemy tylko, gdy go nie ma; zajęty aparat (NotReadableError) to nie powód
+      if(opts.camId && /NotFound|Overconstrained/i.test(e1?.name || '')){ opts.camId = ''; save('opts', opts); }
       await scanner.start({facingMode:'environment'}, cfg, onScan, ()=>{});
     }
+    $('scanHint').textContent = '';
     scanning = true; $('camstart').hidden = true; $('camctl').hidden = false; $('aim').hidden = false;
     await setupTrack();
     fillCameras();
     try{ await navigator.wakeLock?.request('screen'); }catch{}
   }catch(e){
-    toast('Brak dostępu do kamery: ' + (e?.message || e));
+    try{ scanner.clear(); }catch{}
+    if(!last) return;
+    // Trwały komunikat i przycisk startu zamiast znikającego toastu — inaczej zostaje czarny ekran bez wyjścia
+    $('camstart').hidden = false; $('aim').hidden = true;
+    $('scanHint').textContent = `Kamera nie wystartowała (${e?.name || 'błąd'}: ${e?.message || e}). ` +
+      'Zamknij inne karty z aplikacją albo inne aplikacje używające aparatu i stuknij „Włącz kamerę”.';
   }
 }
 
@@ -422,6 +520,14 @@ async function switchCamera(id){
 }
 
 function pauseCam(){ if(scanner && scanning){ try{ scanner.pause(true); }catch{} } }
+// Pełne wyłączenie kamery na czas mówienia ilości: przy otwartej kamerze Chrome nagrywa mikrofon dużo ciszej
+function stopCam(){
+  if(!scanner || !scanning) return Promise.resolve();
+  scanning = false; track = null; $('aim').hidden = true;
+  const s = scanner;
+  camStopping = (async () => { try{ await s.stop(); s.clear(); }catch{} camStopping = null; })();
+  return camStopping;
+}
 function resumeCam(){ if(scanner && scanning){ try{ scanner.resume(); }catch{} } }
 
 /* EAN-13: 13 cyfr + poprawna cyfra kontrolna */
@@ -458,29 +564,34 @@ function onScan(text){
 /* ---------- Wpis ilości ---------- */
 function openEntry(code){
   current = code;
-  pauseCam();
+  const camReady = opts.camOff ? stopCam() : (pauseCam(), Promise.resolve());
   $('entry').hidden = false;
   $('eCode').textContent = code;
   $('eName').textContent = catalog[code] || '';
   $('eName').hidden = !catalog[code];
+  const meta = metaText(code);
+  $('eMeta').textContent = meta; $('eMeta').hidden = !meta;
+  $('eMeta').classList.toggle('warn', meta.startsWith('⚠'));
   const prev = items[code];
-  $('ePrev').textContent = prev ? `Już policzone: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
-  $('qty').value = ''; $('heard').textContent = '';
+  $('ePrev').textContent = prev ? `${M().prev}: ${prev.qty} szt. — ${opts.sum ? 'nowa ilość zostanie dodana' : 'nowa ilość zastąpi starą'}` : '';
+  $('qty').value = ''; $('heard').textContent = ''; $('micState').textContent = '';
   $('entry').scrollIntoView({behavior:'smooth', block:'nearest'});
-  if(opts.autoMic && SR) listen(); else $('qty').focus();
+  // Chwila przerwy po piknięciu, żeby rozpoznawanie nie złapało sygnału zamiast początku słowa
+  if(opts.autoMic && SR) camReady.then(() => setTimeout(() => { if(current === code) listen(); }, 300)); else $('qty').focus();
 }
 
 function closeEntry(){
   stopListen();
   current = null; $('entry').hidden = true;
   lastAt = Date.now();
-  resumeCam();
+  if(opts.camOff) startCamera(); else resumeCam();
 }
 
 function commit(){
   const q = parseInt($('qty').value, 10);
-  if(!Number.isFinite(q) || q < 0){ toast('Podaj ilość'); $('qty').focus(); return; }
+  if(!Number.isFinite(q) || q < (isP() ? 1 : 0)){ toast(isP() ? 'Podaj ilość (co najmniej 1)' : 'Podaj ilość'); $('qty').focus(); return; }
   const code = current, prev = items[code];
+  if(!bigOk(prev && opts.sum ? prev.qty + q : q)){ $('qty').focus(); return; }
   if(prev){
     prev.qty = opts.sum ? prev.qty + q : q; prev.scans++; prev.t = Date.now();
   } else items[code] = {qty:q, scans:1, t:Date.now()};
@@ -492,40 +603,72 @@ function commit(){
   if(li){ li.classList.add('flash'); setTimeout(()=>li.classList.remove('flash'), 900); }
 }
 
+// Literówka 1000 zamiast 10 przy dodawaniu do stanu wyszłaby dopiero przy następnym remanencie
+function bigOk(q){
+  return !isP() || q <= DUZO || confirm(`${q} szt. jednej pozycji — na pewno? Ta ilość zostanie dodana do stanu.`);
+}
+
 /* ---------- Rozpoznawanie mowy ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null;
+let rec = null, tries = 0;
+const MAX_TRIES = 3;   // słuchanie wznawia się samo, gdy nie padła rozpoznana liczba
 if(!SR){ $('mic').disabled = true; $('mic').title = 'Ta przeglądarka nie rozpoznaje mowy — użyj Chrome'; }
 
-function listen(){
+function listen(retry = false){
   if(!SR) return;
   stopListen();
-  rec = new SR();
-  rec.lang = 'pl-PL'; rec.interimResults = true; rec.maxAlternatives = 5; rec.continuous = false;
-  $('mic').classList.add('on'); $('heard').textContent = 'Słucham…';
-  rec.onresult = ev => {
-    const res = ev.results[ev.results.length-1];
-    const alts = Array.from(res).map(a => a.transcript);
-    $('heard').textContent = '„' + alts[0] + '”';
-    if(!res.isFinal) return;
-    const words = strip(alts[0]);
-    if(/\b(anuluj|pomin|stop)\b/.test(words)){ closeEntry(); toast('Anulowano'); return; }
-    let n = null;
-    for(const a of alts){ n = parsePolishNumber(a); if(n !== null) break; }
-    if(n === null){ $('heard').textContent += ' — nie rozpoznano liczby, powtórz albo wpisz'; return; }
-    $('qty').value = n;
-    $('heard').textContent = `„${alts[0]}” → ${n}`;
-    if(opts.autoSave) setTimeout(commit, 450);
+  tries = retry ? tries + 1 : 1;
+  const r = rec = new SR();
+  let done = false, fatal = false, heard = '';
+  // Tryb ciągły, jak w demo Google: w trybie jednej wypowiedzi Chrome na Androidzie
+  // reaguje dopiero na głośną mowę. Słuchanie kończymy sami, gdy padnie liczba.
+  r.lang = 'pl-PL'; r.interimResults = true; r.continuous = true;
+  $('mic').classList.add('on');
+  // Samo „trzy” bywa za krótkie dla rozpoznawania — dwa słowa („trzy sztuki”) przechodzą pewnie
+  if(!retry) $('heard').textContent = 'Słucham… powiedz np. „trzy sztuki”';   // przy ponowieniu zostaje komunikat z onend
+  // Wskaźnik: czy mikrofon ruszył, czy dociera dźwięk, czy rozpoznawanie uznało go za mowę
+  const st = {mik:false, dzwiek:false, mowa:false};
+  const showSt = () => $('micState').textContent =
+    `🎤 mikrofon ${st.mik ? '✓' : '…'} · dźwięk ${st.dzwiek ? '✓' : '…'} · mowa ${st.mowa ? '✓' : '…'}`;
+  showSt();
+  r.onaudiostart = () => { st.mik = true; showSt(); };
+  r.onsoundstart = () => { st.dzwiek = true; showSt(); };
+  r.onspeechstart = () => { st.mowa = true; showSt(); };
+  r.onresult = ev => {
+    for(let i = ev.resultIndex; i < ev.results.length && !done; i++){
+      const res = ev.results[i], text = res[0].transcript;
+      if(text.trim()){ heard = text; $('heard').textContent = '„' + heard + '”'; }
+      // Puste wyniki (0%) przychodzą przed właściwym, gdy mowa jest krótka — czekamy dalej bez komunikatu
+      if(!res.isFinal || !text.trim()) continue;
+      if(/\b(anuluj|pomin|stop)\b/.test(strip(text))){ done = true; closeEntry(); toast('Anulowano'); return; }
+      const n = parsePolishNumber(text);
+      if(n === null){ $('heard').textContent = `„${text}” to nie liczba — powiedz jeszcze raz`; continue; }
+      done = true;
+      try{ r.stop(); }catch{}
+      $('qty').value = n;
+      $('heard').textContent = `„${text}” → ${n}`;
+      if(opts.autoSave) setTimeout(commit, 450);
+    }
   };
-  rec.onerror = e => {
-    if(e.error === 'not-allowed') $('heard').textContent = 'Brak dostępu do mikrofonu';
-    else if(e.error === 'no-speech') $('heard').textContent = 'Nic nie usłyszałem — stuknij 🎤';
-    else $('heard').textContent = 'Błąd rozpoznawania: ' + e.error;
+  r.onerror = e => {
+    if(['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)){
+      fatal = true; $('heard').textContent = 'Brak dostępu do mikrofonu';
+    }
+    if(e.error !== 'aborted') $('micState').textContent += ` · błąd: ${e.error}`;   // diagnostyka
   };
-  rec.onend = () => { $('mic').classList.remove('on'); rec = null; };
-  try{ rec.start(); }catch{}
+  r.onend = () => {
+    if(rec !== r) return;   // przerwane celowo albo zastąpione nowym słuchaniem
+    rec = null; $('mic').classList.remove('on');
+    if(done || fatal || !current) return;
+    const what = heard ? `„${heard}” to nie liczba` : 'Nie usłyszałem liczby';
+    if(tries < MAX_TRIES){
+      $('heard').textContent = `${what} — słucham ponownie (${tries + 1}/${MAX_TRIES})…`;
+      setTimeout(() => { if(current && !rec) listen(true); }, 250);
+    } else $('heard').textContent = what + ' — stuknij 🎤 albo wpisz';
+  };
+  try{ r.start(); }catch{}
 }
-function stopListen(){ if(rec){ try{ rec.abort(); }catch{} rec = null; } $('mic').classList.remove('on'); }
+function stopListen(){ const r = rec; rec = null; if(r){ try{ r.abort(); }catch{} } $('mic').classList.remove('on'); }
 
 /* ---------- Edycja / czyszczenie ---------- */
 let editing = null;
@@ -538,37 +681,42 @@ function openEdit(code){
 }
 $('dOk').onclick = () => {
   const q = parseInt($('dQty').value,10);
-  if(Number.isFinite(q) && q >= 0){ items[editing].qty = q; persist(); }
+  if(isP() && q === 0){ toast('Pozycję usuń przyciskiem Usuń'); return; }
+  if(Number.isFinite(q) && q >= 0){
+    if(!bigOk(q)) return;
+    items[editing].qty = q; persist();
+  }
   $('dlgEdit').close();
 };
 $('dDel').onclick = () => { delete items[editing]; persist(); $('dlgEdit').close(); toast('Usunięto pozycję'); };
 $('dCancel').onclick = () => $('dlgEdit').close();
 
-$('btnClear').onclick = () => { $('clrN').textContent = Object.keys(items).length; $('dlgClear').showModal(); };
+$('btnClear').onclick = () => {
+  $('clrTitle').textContent = isP() ? 'Wyczyścić przyjęcie?' : 'Zresetować remanent?';
+  $('clrN').textContent = Object.keys(items).length; $('dlgClear').showModal();
+};
 $('cNo').onclick = () => $('dlgClear').close();
-$('cYes').onclick = () => { items = {}; persist(); $('dlgClear').close(); toast('Remanent zresetowany'); };
+$('cYes').onclick = () => { items = {}; persist(); save(M().id, ''); $('dlgClear').close(); toast(isP() ? 'Przyjęcie wyczyszczone' : 'Remanent zresetowany'); };
 
 /* ---------- Eksport ---------- */
 // Ten sam układ co przy wczytywaniu listy: Kod | Ilość | Nazwa (Nazwa tylko, gdy wczytano listę)
-function rows(){
-  const hasCat = Object.keys(catalog).length > 0;
-  const head = hasCat ? ['Kod','Ilość','Nazwa'] : ['Kod','Ilość'];
-  const body = Object.keys(items).sort().map(c => hasCat ? [c, items[c].qty, catalog[c]||''] : [c, items[c].qty]);
+function rows(it = items, names = Object.keys(catalog).length ? catalog : null){
+  const head = names ? ['Kod','Ilość','Nazwa'] : ['Kod','Ilość'];
+  const body = Object.keys(it).sort().map(c => names ? [c, it[c].qty, names[c]||''] : [c, it[c].qty]);
   return [head, ...body];
 }
 function stamp(){
   const d = new Date(), p = n => String(n).padStart(2,'0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
-function csvFile(name){
+function csvFile(name, data){
   const esc = v => { v = String(v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
   // Kod jako tekst, żeby Excel nie zjadł zer wiodących ani nie zamienił EAN na 5,9E+12
-  const csv = rows().map((r,i) => r.map((v,j) => (i>0 && j===0) ? '="'+v+'"' : esc(v)).join(';')).join('\r\n');
+  const csv = data.map((r,i) => r.map((v,j) => (i>0 && j===0) ? '="'+v+'"' : esc(v)).join(';')).join('\r\n');
   return new File(['﻿'+csv], name, {type:'text/csv;charset=utf-8'});
 }
-function xlsxFile(name){
+function xlsxFile(name, data){
   if(!window.XLSX) return null;
-  const data = rows();
   const ws = XLSX.utils.aoa_to_sheet(data);
   for(let r=1; r<data.length; r++){ const ref = XLSX.utils.encode_cell({r, c:0}); ws[ref].t = 's'; ws[ref].z = '@'; }
   ws['!cols'] = data[0].length === 3 ? [{wch:18},{wch:8},{wch:50}] : [{wch:18},{wch:8}];
@@ -576,10 +724,31 @@ function xlsxFile(name){
   const out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
   return new File([out], name, {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
-function reportFiles(){
-  const base = 'remanent_' + stamp();
-  return [csvFile(base + '.csv'), xlsxFile(base + '.xlsx')].filter(Boolean);
+function reportFiles(data = rows(), base = 'remanent_' + stamp()){
+  return [csvFile(base + '.csv', data), xlsxFile(base + '.xlsx', data)].filter(Boolean);
 }
+
+/* ---------- Kopia bezpieczeństwa: ostatni wysłany remanent / przyjęcie zostaje w telefonie ---------- */
+const lastBase = l => (l.dokument ? 'przyjecie_' + l.dokument.replace(/\//g, '-') + '_' : 'remanent_') + l.stamp;
+function saveLast(tryb, dokument){
+  const names = Object.keys(catalog).length ? Object.fromEntries(Object.keys(items).map(c => [c, catalog[c] || ''])) : null;
+  save(M().last, {stamp:stamp(), tryb, dokument, items, names});
+  lastInfo();
+}
+function lastInfo(){
+  const l = load(M().last, null);
+  $('lastRow').hidden = !l;
+  if(!l) return;
+  const codes = Object.keys(l.items), sum = codes.reduce((s,c) => s + l.items[c].qty, 0);
+  const kiedy = l.stamp.replace(/_(\d\d)(\d\d)$/, ' $1:$2');
+  $('lastInfo').textContent = (l.dokument ? `Ostatnie przyjęcie: ${l.dokument} · ${kiedy}` :
+    `Ostatni remanent: ${kiedy} · ${l.tryb === 'pelny' ? 'pełny' : 'częściowy'}`) + ` · ${codes.length} poz. · ${sum} szt.`;
+  $('btnLast').textContent = l.dokument ? 'Zapisz pliki ostatniego przyjęcia' : 'Zapisz pliki ostatniego remanentu';
+}
+$('btnLast').onclick = () => {
+  const l = load(M().last, null);
+  if(l) deliver(reportFiles(rows(l.items, l.names), lastBase(l)));
+};
 async function deliver(files){
   if(navigator.canShare?.({files})){
     try{ await navigator.share({files, title:files[0].name}); return; }catch(e){ if(e.name === 'AbortError') return; }
@@ -591,15 +760,20 @@ async function deliver(files){
   }
 }
 
-/* ---------- Zakończenie: wysyłka mailem przez skrypt PHP na serwerze ---------- */
-const DEFAULT_MAIL = 'jacek@lim-czestochowa.com.pl';
+/* ---------- Zakończenie: kolejka w skrypcie Google → kontener art-repricer → Apilo, raport mailem z kontenera ---------- */
+const LOCK_MSG = 'W dni robocze 13:45–14:30 nie można zakończyć remanentu (zamówienia InnPro o 14:00). Spróbuj po 14:30.';
 let finFiles = null;
-const toBase64 = f => new Promise((ok, bad) => {
-  const r = new FileReader();
-  r.onload = () => ok(String(r.result).split(',')[1]);
-  r.onerror = () => bad(r.error);
-  r.readAsDataURL(f);
-});
+// Okno zamówień InnPro: kontener w tym czasie zmienia stany LIM-, więc remanent musi poczekać
+function locked(){
+  const d = new Date(), day = d.getDay(), m = d.getHours()*60 + d.getMinutes();
+  return day >= 1 && day <= 5 && m >= 13*60+45 && m < 14*60+30;
+}
+// Id trzymamy do udanej wysyłki: ponowienie po błędzie nie tworzy drugiego wpisu w kolejce
+function sendId(){
+  let id = load(M().id, '');
+  if(!id){ id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); save(M().id, id); }
+  return id;
+}
 function totals(){
   const codes = Object.keys(items);
   return {n: codes.length, sum: codes.reduce((s,c) => s + items[c].qty, 0)};
@@ -607,9 +781,15 @@ function totals(){
 $('btnFinish').onclick = () => {
   const {n, sum} = totals();
   if(!n) return toast('Brak pozycji — nie ma czego wysłać');
+  if(!isP() && locked()) return toast(LOCK_MSG);
   finFiles = null;
+  document.querySelector('input[name=finTryb][value=czesciowy]').checked = true;
+  $('finTitle').textContent = isP() ? 'Zakończyć przyjęcie?' : 'Zakończyć remanent?';
+  $('finTxt').textContent = isP()
+    ? 'Ilości zostaną dodane do stanów LIM-, brakujące produkty założone z InnPro. Numer przyjęcia (kolejny w miesiącu) nada skrypt. Lista w telefonie zostanie wyczyszczona. Raport przyjdzie mailem (zwykle do 2 min); kopia zostaje w Ustawieniach.'
+    : 'Remanent trafi do przetworzenia, a lista w telefonie zostanie wyczyszczona. Raport przyjdzie mailem (zwykle do 2 min); kopia zostaje w Ustawieniach → Ostatni remanent.';
+  $('finTrybBox').hidden = isP();
   $('finN').textContent = `${n} poz. · ${sum} szt.`;
-  $('finMail').value = opts.mailTo || DEFAULT_MAIL;
   $('finErr').textContent = ''; $('fSaveRow').hidden = true;
   $('fYes').disabled = false; $('fYes').textContent = 'Wyślij i zakończ';
   $('dlgFinish').showModal();
@@ -617,51 +797,97 @@ $('btnFinish').onclick = () => {
 $('fNo').onclick = () => $('dlgFinish').close();
 $('fSave').onclick = () => deliver(finFiles || reportFiles());
 $('fYes').onclick = async () => {
-  const to = $('finMail').value.trim();
-  if(!$('finMail').checkValidity() || !to){ $('finErr').textContent = 'Podaj poprawny adres e-mail'; return; }
-  opts.mailTo = to; save('opts', opts);
+  const p = isP();
+  if(!p && locked()){ $('finErr').textContent = LOCK_MSG; return; }
   if(!opts.mailUrl){ $('finErr').textContent = 'Ustaw adres skryptu wysyłki (⚙ u góry ekranu)'; $('fSaveRow').hidden = false; return; }
-  const {n, sum} = totals();
-  finFiles = reportFiles();
-  const subject = 'Remanent ' + stamp().replace('_', ' ');
-  const body = `${subject}\nPozycji: ${n}\nSztuk razem: ${sum}\n`;
+  finFiles = reportFiles(rows(), (p ? 'przyjecie_' : 'remanent_') + stamp());
+  const tryb = p ? 'przyjecie' : document.querySelector('input[name=finTryb]:checked').value;
   $('fYes').disabled = true; $('fYes').textContent = 'Wysyłam…'; $('finErr').textContent = '';
+  let j;
   try{
-    // Google Apps Script (tymczasowo): JSON jako text/plain, bez preflightu CORS; pliki w base64
-    const files = await Promise.all(finFiles.map(async f => ({name:f.name, data:await toBase64(f)})));
-    const payload = {key:opts.mailKey || '', to, subject, body, files};
-    const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(payload)});
-    /* Skrypt PHP na hostingu (serwer/mail.php) — wrócić do tego, gdy będzie dostęp do hostingu:
-    const fd = new FormData();
-    fd.append('key', opts.mailKey || ''); fd.append('to', to);
-    fd.append('subject', subject); fd.append('body', body);
-    for(const f of finFiles) fd.append('files[]', f, f.name);
-    const r = await fetch(opts.mailUrl, {method:'POST', body:fd});
-    */
-    const j = await r.json().catch(() => ({}));
-    if(!r.ok || !j.ok) throw new Error(j.error || (r.ok ? 'nieoczekiwana odpowiedź skryptu' : 'HTTP ' + r.status));
+    // Same dane (JSON jako text/plain, bez preflightu CORS) — skrypt Google zapisuje je w kolejce dla kontenera
+    const dane = {
+      wersja:1, id:sendId(), zakonczono:new Date().toISOString(),
+      pozycje:Object.keys(items).map(c => ({ean:c, ilosc:items[c].qty}))
+    };
+    j = await gas(p ? {przyjecie:dane} : {remanent:{...dane, tryb}});
   }catch(e){
     $('finErr').textContent = 'Nie wysłano: ' + (e?.message || e) + '. Lista została bez zmian.';
     $('fSaveRow').hidden = false;
     $('fYes').disabled = false; $('fYes').textContent = 'Spróbuj ponownie';
     return;
   }
-  items = {}; persist();
+  const dokument = p ? String(j.dokument || '?') : undefined;   // numer nadany przez skrypt
+  saveLast(tryb, dokument);
+  items = {}; persist(); save(M().id, '');
   $('dlgFinish').close();
-  toast(`Wysłano na ${to} — remanent zakończony`);
+  if(!p) toast('Remanent wysłany — raport przyjdzie mailem');
+  // Kontener w trybie testowym tylko wylicza stany — towar fizycznie przyjęty, a Apilo bez zmian
+  else if(j.kontener_tryb === 'test') toast(`Przyjęcie ${dokument} wysłane. TEST — stan w Apilo NIE zostanie zmieniony, raport przyjdzie mailem`, 6000);
+  else toast(`Przyjęcie ${dokument} wysłane — raport przyjdzie mailem`, 3500);
 };
 
-/* ---------- Katalog produktów (opcjonalny) ---------- */
+/* ---------- Katalog produktów: lista z Apilo/InnPro (kontener → skrypt Google) albo plik ---------- */
+const fmtT = s => { const d = new Date(s); return s && !isNaN(d) ? d.toLocaleString('pl-PL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : (s || '?'); };
 function catInfo(){
   const n = Object.keys(catalog).length;
-  $('catInfo').textContent = n ? `Wczytano ${n} produktów — w raporcie pojawi się kolumna Nazwa.` :
-    'Opcjonalnie: plik w układzie raportu (Kod | Ilość | Nazwa) albo inny z kolumną kodu i nazwy. Ilość jest pomijana.';
+  if(catSrc?.typ === 'apilo'){
+    const l = catSrc.liczby || {};
+    const stary = catSrc.feed_z && Date.now() - new Date(catSrc.feed_z) > 2 * 86400000;
+    $('catInfo').textContent = `Lista z Apilo i InnPro z ${fmtT(catSrc.wygenerowano)}: ${n} produktów ` +
+      `(${l.lim ?? '?'} na stanie, ${l.nowy ?? '?'} nowych z InnPro). Odświeża się sama przy uruchomieniu.` +
+      (stary ? ` ⚠ Plik InnPro z ${fmtT(catSrc.feed_z)} — nieaktualny.` : '');
+  } else {
+    $('catInfo').textContent = n ? `Wczytano z pliku ${n} produktów — w raporcie pojawi się kolumna Nazwa.` :
+      'Lista produktów pobiera się sama ze skryptu Google (⚙). Zapasowo: plik Kod | Ilość | Nazwa (ilość jest pomijana).';
+  }
   $('btnCatClear').hidden = !n;
+  $('btnCatSync').hidden = !opts.mailUrl;
 }
+// Podpowiedź po skanie: to samo, co zrobi kontener przy remanencie (wg listy z chwili eksportu)
+function metaText(code){
+  if(catSrc?.typ !== 'apilo') return '';
+  const m = catMeta[code], z = ` · podpowiedź z ${fmtT(catSrc.wygenerowano)}`;
+  if(!m) return '⚠ nieznany EAN — do ręcznej obsługi' + z;
+  if(m[0] === 'lim') return `na stanie · ${m[1]}` + (isP() ? ' · ilość zostanie dodana' : '') + z;
+  if(m[0] === 'nowy') return `nowy z InnPro · zostanie założony jako ${m[1]}` + z;
+  return `⚠ do ręcznej obsługi: ${m[2] || 'szczegóły w raporcie'}` + z;
+}
+async function gas(body){
+  const r = await fetch(opts.mailUrl, {method:'POST', body:JSON.stringify(Object.assign({key:opts.mailKey || ''}, body))});
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok || !j.ok) throw new Error(j.error || (r.ok ? 'nieoczekiwana odpowiedź skryptu' : 'HTTP ' + r.status));
+  return j;
+}
+// Pełną listę (~1 MB) pobieramy tylko, gdy w skrypcie jest nowsza niż w telefonie
+async function syncCatalog(force = false){
+  if(!opts.mailUrl || !opts.mailKey) return;
+  try{
+    const info = await gas({akcja:'katalog_info'});
+    if(!info.liczba){ if(force) toast('W skrypcie Google nie ma jeszcze listy produktów'); return; }
+    const mam = catSrc?.typ === 'apilo' && catSrc.wygenerowano === info.wygenerowano && Object.keys(catalog).length;
+    if(mam && !force) return;
+    const j = await gas({akcja:'katalog_pobierz'});
+    const cat = {}, meta = {};
+    for(const [ean, s, sku, nazwa, powod] of j.pozycje){ cat[ean] = nazwa; meta[ean] = [s, sku, powod]; }
+    catalog = cat; catMeta = meta;
+    catSrc = {typ:'apilo', wygenerowano:j.wygenerowano, feed_z:j.feed_z, liczby:j.liczby, liczba:j.liczba};
+    // catSrc zapisujemy na końcu: przy braku miejsca następne uruchomienie pobierze listę jeszcze raz
+    if(save('catalog', catalog) && save('catMeta', catMeta)) save('catSrc', catSrc);
+    else toast('Za mało miejsca w telefonie na listę — działa do zamknięcia aplikacji');
+    catInfo(); render();
+    toast(`Pobrano listę produktów: ${j.liczba}`);
+  }catch(e){ if(force) toast('Nie udało się pobrać listy: ' + (e?.message || e)); }
+}
+$('btnCatSync').onclick = () => syncCatalog(true);
 $('btnCatalog').onclick = () => $('catFile').click();
 $('btnCatClear').onclick = () => $('dlgCat').showModal();
 $('kNo').onclick = () => $('dlgCat').close();
-$('kYes').onclick = () => { catalog = {}; save('catalog', catalog); catInfo(); render(); $('dlgCat').close(); toast('Lista produktów wyczyszczona'); };
+$('kYes').onclick = () => {
+  catalog = {}; catMeta = {}; catSrc = null;
+  save('catalog', catalog); save('catMeta', catMeta); save('catSrc', catSrc);
+  catInfo(); render(); $('dlgCat').close(); toast('Lista produktów wyczyszczona');
+};
 $('catFile').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
   let table;
@@ -695,7 +921,8 @@ $('catFile').onchange = async e => {
     if(/^\d{12}$/.test(c) && isEan13('0' + c)) c = '0' + c;   // Excel gubi zero wiodące EAN-13
     if(c) cat[c] = String(r[ni] ?? '').trim();
   }
-  catalog = cat; save('catalog', catalog); catInfo(); render();
+  catalog = cat; catMeta = {}; catSrc = {typ:'plik'};
+  save('catalog', catalog); save('catMeta', catMeta); save('catSrc', catSrc); catInfo(); render();
   toast(`Wczytano ${Object.keys(cat).length} produktów`);
   e.target.value = '';
 };
@@ -717,7 +944,7 @@ $('btnManual').onclick = () => {
   $('manualCode').value=''; openEntry(c);
 };
 $('manualCode').addEventListener('keydown', e => { if(e.key === 'Enter') $('btnManual').click(); });
-for(const [id,key] of [['optAutoMic','autoMic'],['optAutoSave','autoSave'],['optSum','sum']]){
+for(const [id,key] of [['optAutoMic','autoMic'],['optAutoSave','autoSave'],['optSum','sum'],['optCamOff','camOff']]){
   $(id).checked = opts[key];
   $(id).onchange = () => { opts[key] = $(id).checked; save('opts', opts); };
 }
@@ -727,11 +954,17 @@ for(const [id,key] of [['optMailUrl','mailUrl'],['optMailKey','mailKey']]){
 }
 $('btnSet').onclick = () => $('dlgSet').showModal();
 // Zapis także przy zamknięciu — na telefonie change nie zawsze przychodzi przed zamknięciem okna
-$('sOk').onclick = () => { for(const id of ['optMailUrl','optMailKey']) $(id).onchange(); $('dlgSet').close(); };
+$('sOk').onclick = () => {
+  for(const id of ['optMailUrl','optMailKey']) $(id).onchange();
+  $('dlgSet').close(); catInfo(); syncCatalog();
+};
 document.addEventListener('visibilitychange', async () => {
   if(document.visibilityState === 'visible' && scanning){ try{ await navigator.wakeLock?.request('screen'); }catch{} }
 });
-catInfo(); render();
+$('mRem').onclick = () => setMode('remanent');
+$('mPrz').onclick = () => setMode('przyjecie');
+applyMode(); catInfo(); lastInfo(); render();
+syncCatalog();
 
 // Kamera startuje sama po otwarciu aplikacji; przycisk zostaje tylko jako zapas, gdy start się nie uda
 startCamera();
