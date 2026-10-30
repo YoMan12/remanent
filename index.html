@@ -422,7 +422,8 @@ async function startCameraInner(last = true){
   const F = Html5QrcodeSupportedFormats;
   scanner = new Html5Qrcode('reader', {
     verbose:false,
-    formatsToSupport:[F.EAN_13],
+    // Code 128: naklejki dostawców z numerem EAN zakodowanym w Code 128 — przyjmujemy tylko poprawny EAN-13 (onScan)
+    formatsToSupport:[F.EAN_13, F.CODE_128],
     experimentalFeatures:{useBarCodeDetectorIfSupported:true}
   });
   const cam = opts.camId ? {deviceId:{exact:opts.camId}} : {facingMode:'environment'};
@@ -540,11 +541,13 @@ function isEan13(c){
 
 // Kod przyjmujemy dopiero, gdy ten sam poprawny EAN-13 odczytamy 2 razy z rzędu
 let candidate = '', candHits = 0, candAt = 0, badAt = 0;
-function onScan(text){
+function onScan(text, res){
   if(current) return;
   const code = String(text).replace(/\s/g,'');
   const now = Date.now();
   if(!isEan13(code)){
+    // Inne kody 128 na opakowaniu (numery seryjne itp.) pomijamy po cichu, żeby nie przerywały odczytu EAN obok
+    if(/128/.test(res?.result?.format?.formatName || '')) return;
     candidate = ''; candHits = 0;
     if(now - badAt > 2000){ badAt = now; $('scanHint').textContent = 'Odczyt niepełny — przytrzymaj telefon nieruchomo'; }
     return;
